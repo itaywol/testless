@@ -83,6 +83,7 @@ mod tests {
     fn registry_matches_extension() {
         let r = Registry::new(vec![Box::new(Fake)]);
         assert_eq!(r.for_path(Path::new("x/y.fk")).unwrap().id(), "fake");
+        assert_eq!(r.for_path(Path::new("x/y.FK")).unwrap().id(), "fake");
         assert!(r.for_path(Path::new("x/y.rs")).is_none());
     }
 }

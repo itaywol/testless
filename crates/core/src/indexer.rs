@@ -134,7 +134,7 @@ pub fn index_repo_incremental(
 
             if let Some(target_id) = graph.files.iter().position(|f| f.path == resolved) {
                 let target_id = target_id as NodeId;
-                if seen.insert((file_id, target_id)) {
+                if target_id != file_id && seen.insert((file_id, target_id)) {
                     graph.add_edge(file_id, EdgeKind::Imports, target_id);
                 }
                 continue;

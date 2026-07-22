@@ -56,6 +56,23 @@ func TestFoo(t *testing.T) {
 }
 
 #[test]
+fn extracts_dot_and_blank_imports() {
+    let src = r#"package p
+
+import (
+	. "example.com/go-app/calc"
+	_ "example.com/go-app/fmt2"
+)
+
+func Use() {}
+"#;
+    let ex = extract(src);
+    let raws: Vec<&str> = ex.imports.iter().map(|i| i.raw.as_str()).collect();
+    assert!(raws.contains(&"example.com/go-app/calc"));
+    assert!(raws.contains(&"example.com/go-app/fmt2"));
+}
+
+#[test]
 fn resolves_module_internal_imports() {
     let root = Path::new("../../fixtures/go-app");
     let l = GoLanguage;
