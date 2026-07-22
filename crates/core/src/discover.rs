@@ -33,7 +33,7 @@ pub fn discover<'r>(root: &Path, registry: &'r Registry) -> Vec<(PathBuf, &'r dy
         }
         let path = entry.path();
         if let Some(lang) = registry.for_path(path) {
-            let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
+            let rel = path.strip_prefix(root).expect("entry under root").to_path_buf();
             out.push((rel, lang));
         }
     }
@@ -45,15 +45,18 @@ pub fn discover<'r>(root: &Path, registry: &'r Registry) -> Vec<(PathBuf, &'r dy
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::language::tests_support::Fake; // move Fake to a #[cfg(test)] pub module in language.rs
+    use crate::language::tests_support::Fake;
 
     #[test]
     fn discovers_matching_files_respecting_gitignore() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("lib")).unwrap();
         std::fs::create_dir_all(root.join("node_modules/dep")).unwrap();
         std::fs::write(root.join("src/a.fk"), "").unwrap();
+        std::fs::write(root.join("src/z.fk"), "").unwrap();
+        std::fs::write(root.join("lib/b.fk"), "").unwrap();
         std::fs::write(root.join("src/skip.txt"), "").unwrap();
         std::fs::write(root.join("node_modules/dep/b.fk"), "").unwrap();
         std::fs::write(root.join("ignored.fk"), "").unwrap();
@@ -61,6 +64,13 @@ mod tests {
 
         let r = Registry::new(vec![Box::new(Fake)]);
         let found: Vec<_> = discover(root, &r).into_iter().map(|(p, _)| p).collect();
-        assert_eq!(found, vec![std::path::PathBuf::from("src/a.fk")]);
+        assert_eq!(
+            found,
+            vec![
+                std::path::PathBuf::from("lib/b.fk"),
+                std::path::PathBuf::from("src/a.fk"),
+                std::path::PathBuf::from("src/z.fk"),
+            ]
+        );
     }
 }
