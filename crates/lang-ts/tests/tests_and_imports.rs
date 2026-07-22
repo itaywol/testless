@@ -43,3 +43,36 @@ fn resolves_relative_extensionless_index_and_js_suffix() {
                Some(PathBuf::from("src/math.ts")));
     assert_eq!(l.resolve_import(Path::new("src/format.ts"), "vitest", root), None);
 }
+
+#[test]
+fn each_curried_calls_extract_as_computed_not_spurious() {
+    let src = r#"
+import { describe, it } from "vitest";
+describe("math", () => {
+  it.each([
+    [1, 2],
+    [3, 4],
+  ])("adds %i and %i", (a, b) => {
+    expect(a + b).toBeGreaterThan(0);
+  });
+});
+"#;
+    let ex = extract(src);
+    let tests: Vec<_> = ex.defs.iter().filter(|d| d.kind == DefKind::TestCase).collect();
+    assert_eq!(tests.len(), 1);
+    assert_eq!(tests[0].test_id.as_ref().unwrap()[0], "math");
+    assert!(tests[0].computed_name);
+    // no spurious empty-chain defs
+    assert!(tests.iter().all(|d| !d.test_id.as_ref().unwrap().is_empty()));
+    // The def must be attributed to the OUTER curried call (`it.each(table)("adds %i and %i", cb)`),
+    // which spans through the callback's closing `});` on line 9 — not the INNER
+    // `it.each(table)` call alone, which ends at the array's closing `])` on line 7.
+    // Before the fix, the inner call was misclassified as its own (spurious) Leaf,
+    // so its span stopped at line 7 and the real callback body was never attributed
+    // to this def.
+    assert!(
+        tests[0].end_line >= 9,
+        "expected span to cover the outer call's callback (end_line >= 9), got {}",
+        tests[0].end_line
+    );
+}

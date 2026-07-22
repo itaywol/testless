@@ -60,9 +60,14 @@ impl Language for TsLanguage {
         let base = normalize_path(&from_dir.join(raw));
         let base_str = base.to_string_lossy().to_string();
 
+        let known_exts = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx"];
+        let raw_has_known_ext = known_exts.iter().any(|ext| raw.ends_with(ext));
+
         let mut candidates: Vec<PathBuf> = vec![base.clone()];
-        for ext in [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx"] {
-            candidates.push(PathBuf::from(format!("{base_str}{ext}")));
+        if !raw_has_known_ext {
+            for ext in known_exts {
+                candidates.push(PathBuf::from(format!("{base_str}{ext}")));
+            }
         }
         if let Some(stripped) = base_str.strip_suffix(".js") {
             candidates.push(PathBuf::from(format!("{stripped}.ts")));
@@ -129,14 +134,28 @@ enum TestCallKind {
     Leaf,
 }
 
-/// Classify a `call_expression` as `describe(...)` / `it(...)` / `test(...)`,
-/// including member-expression forms like `describe.skip`, `it.each`, etc.
-fn classify_test_call(node: Node, src: &[u8]) -> Option<TestCallKind> {
-    let func = node.child_by_field_name("function")?;
-    let base_name = match func.kind() {
-        "identifier" => func.utf8_text(src).ok()?,
+/// A `call_expression` recognized as a test-framework declaration.
+struct TestCallMatch {
+    kind: TestCallKind,
+    /// For curried `it.each(table)("name", fn)` / `describe.each(...)(...)`
+    /// forms, the id of the inner call node (`it.each(table)`) — it must be
+    /// skipped during generic recursion so it isn't independently
+    /// re-classified as its own (spurious) leaf/describe call.
+    skip_child_id: Option<usize>,
+    /// Curried `.each(...)` forms: the outer call's first argument is a
+    /// printf-style template (e.g. `"adds %i and %i"`), not a stable literal
+    /// id, so the segment is always forced to computed.
+    curried: bool,
+}
+
+/// Classify a callee node (an `identifier` or `member_expression`) as
+/// `describe` / `it` / `test`, covering member-expression forms like
+/// `describe.skip`, `it.each`, `test.only`, etc.
+fn callee_kind(callee: Node, src: &[u8]) -> Option<TestCallKind> {
+    let base_name = match callee.kind() {
+        "identifier" => callee.utf8_text(src).ok()?,
         "member_expression" => {
-            let object = func.child_by_field_name("object")?;
+            let object = callee.child_by_field_name("object")?;
             if object.kind() != "identifier" {
                 return None;
             }
@@ -149,6 +168,22 @@ fn classify_test_call(node: Node, src: &[u8]) -> Option<TestCallKind> {
         "it" | "test" => Some(TestCallKind::Leaf),
         _ => None,
     }
+}
+
+/// Classify a `call_expression` as a `describe`/`it`/`test` declaration,
+/// including the curried `it.each(table)("name", fn)` form where the callee
+/// itself is a `call_expression` (`it.each(table)`).
+fn match_test_call(node: Node, src: &[u8]) -> Option<TestCallMatch> {
+    let func = node.child_by_field_name("function")?;
+    if let Some(kind) = callee_kind(func, src) {
+        return Some(TestCallMatch { kind, skip_child_id: None, curried: false });
+    }
+    if func.kind() == "call_expression" {
+        let inner_func = func.child_by_field_name("function")?;
+        let kind = callee_kind(inner_func, src)?;
+        return Some(TestCallMatch { kind, skip_child_id: Some(func.id()), curried: true });
+    }
+    None
 }
 
 /// The chain segment contributed by this call's first argument: the literal
@@ -169,15 +204,16 @@ fn first_arg_segment(node: Node, src: &[u8]) -> (String, bool) {
 /// literal segment (i.e. it stops at the first computed segment).
 fn walk_tests(node: Node, src: &[u8], defs: &mut Vec<ExtractedDef>, stack: &mut Vec<(String, bool)>) {
     if node.kind() == "call_expression" {
-        if let Some(kind) = classify_test_call(node, src) {
-            let seg = first_arg_segment(node, src);
-            match kind {
+        if let Some(m) = match_test_call(node, src) {
+            let seg = if m.curried {
+                ("<computed>".to_string(), true)
+            } else {
+                first_arg_segment(node, src)
+            };
+            match m.kind {
                 TestCallKind::Describe => {
                     stack.push(seg);
-                    let mut cursor = node.walk();
-                    for child in node.children(&mut cursor) {
-                        walk_tests(child, src, defs, stack);
-                    }
+                    walk_children_skipping(node, m.skip_child_id, src, defs, stack);
                     stack.pop();
                     return;
                 }
@@ -199,17 +235,30 @@ fn walk_tests(node: Node, src: &[u8], defs: &mut Vec<ExtractedDef>, stack: &mut 
                         computed_name,
                         parent: None,
                     });
-                    let mut cursor = node.walk();
-                    for child in node.children(&mut cursor) {
-                        walk_tests(child, src, defs, stack);
-                    }
+                    walk_children_skipping(node, m.skip_child_id, src, defs, stack);
                     return;
                 }
             }
         }
     }
+    walk_children_skipping(node, None, src, defs, stack);
+}
+
+/// Recurse into every child of `node`, except the child (if any) matching
+/// `skip_id` by node id — used to avoid re-classifying the inner call of a
+/// curried `it.each(table)("name", fn)` form as its own spurious leaf/describe.
+fn walk_children_skipping(
+    node: Node,
+    skip_id: Option<usize>,
+    src: &[u8],
+    defs: &mut Vec<ExtractedDef>,
+    stack: &mut Vec<(String, bool)>,
+) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
+        if Some(child.id()) == skip_id {
+            continue;
+        }
         walk_tests(child, src, defs, stack);
     }
 }
