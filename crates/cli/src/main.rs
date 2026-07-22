@@ -2,7 +2,7 @@ use std::io::IsTerminal;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 
 use pick_a_test_core::cache::Cache;
 use pick_a_test_core::graph::{DefKind, Graph};
@@ -10,7 +10,10 @@ use pick_a_test_core::indexer::index_repo_incremental;
 use pick_a_test_core::Registry;
 
 #[derive(Parser)]
-#[command(name = "pick-a-test")]
+#[command(
+    name = "pick-a-test",
+    after_help = "Examples:\n  pick-a-test index\n  pick-a-test stats\n  pick-a-test completion zsh > _pick-a-test"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -26,6 +29,11 @@ enum Cmd {
     },
     /// Print counts from the existing cache.
     Stats,
+    /// Generate a shell completion script and print it to stdout.
+    Completion {
+        /// Shell to generate completions for (bash, zsh, fish, elvish, powershell).
+        shell: clap_complete::Shell,
+    },
 }
 
 fn registry() -> Registry {
@@ -117,11 +125,17 @@ fn cmd_stats() -> Result<()> {
     Ok(())
 }
 
+fn cmd_completion(shell: clap_complete::Shell) -> Result<()> {
+    clap_complete::generate(shell, &mut Cli::command(), "pick-a-test", &mut std::io::stdout());
+    Ok(())
+}
+
 fn main() {
     let cli = Cli::parse();
     let result = match cli.cmd {
         Cmd::Index { full } => cmd_index(full),
         Cmd::Stats => cmd_stats(),
+        Cmd::Completion { shell } => cmd_completion(shell),
     };
 
     if let Err(err) = result {
