@@ -5,3 +5,5 @@ edition.workspace = true
 
 [dependencies]
 pick-a-test-core = { path = "../core" }
+tree-sitter = "0.26.11"
+tree-sitter-go = "0.25.0"
