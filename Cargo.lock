@@ -311,6 +311,7 @@ dependencies = [
  "pick-a-test-lang-go",
  "pick-a-test-lang-ts",
  "predicates",
+ "tempfile",
 ]
 
 [[package]]

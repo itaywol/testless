@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
@@ -86,8 +86,13 @@ pub fn index_repo(root: &Path, registry: &Registry) -> Result<Graph> {
 
     // Pass 2: resolve imports now that every file is indexed. A resolved
     // path that matches an indexed file exactly gets a single edge; a Go
-    // package-directory result fans out to every indexed file directly
-    // under that directory.
+    // package-directory result fans out to every *other* indexed file
+    // directly under that directory (excluding the importing file itself,
+    // so a file importing its own package doesn't get a self-edge).
+    // `seen` dedups repeated imports of the same target from the same file
+    // (e.g. a type-only import alongside a value import of the same
+    // module) down to a single `Imports` edge.
+    let mut seen: HashSet<(NodeId, NodeId)> = HashSet::new();
     for (file_id, ((rel_path, lang), extraction)) in files.iter().zip(extractions.iter()).enumerate() {
         let file_id = file_id as NodeId;
         for import in &extraction.imports {
@@ -96,7 +101,10 @@ pub fn index_repo(root: &Path, registry: &Registry) -> Result<Graph> {
             };
 
             if let Some(target_id) = graph.files.iter().position(|f| f.path == resolved) {
-                graph.add_edge(file_id, EdgeKind::Imports, target_id as NodeId);
+                let target_id = target_id as NodeId;
+                if seen.insert((file_id, target_id)) {
+                    graph.add_edge(file_id, EdgeKind::Imports, target_id);
+                }
                 continue;
             }
 
@@ -104,11 +112,15 @@ pub fn index_repo(root: &Path, registry: &Registry) -> Result<Graph> {
                 .files
                 .iter()
                 .enumerate()
-                .filter(|(_, f)| f.path.parent() == Some(resolved.as_path()))
+                .filter(|(target_id, f)| {
+                    f.path.parent() == Some(resolved.as_path()) && *target_id as NodeId != file_id
+                })
                 .map(|(target_id, _)| target_id as NodeId)
                 .collect();
             for target_id in dir_targets {
-                graph.add_edge(file_id, EdgeKind::Imports, target_id);
+                if seen.insert((file_id, target_id)) {
+                    graph.add_edge(file_id, EdgeKind::Imports, target_id);
+                }
             }
         }
     }
