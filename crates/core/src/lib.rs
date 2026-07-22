@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod discover;
 pub mod graph;
 pub mod indexer;

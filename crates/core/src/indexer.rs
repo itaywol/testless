@@ -1,54 +1,85 @@
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use tree_sitter::Parser;
 
+use crate::cache::CachedExtraction;
 use crate::discover::discover;
 use crate::graph::{Def, EdgeKind, FileNode, Graph, NodeId};
-use crate::language::{Extraction, Registry};
+use crate::language::{Extraction, Language, Registry};
+
+/// Counts of work done by [`index_repo_incremental`]: how many files were
+/// actually re-parsed with tree-sitter vs. how many reused a previous run's
+/// `Extraction` because their content hash was unchanged.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct IndexStats {
+    pub parsed: usize,
+    pub reused: usize,
+}
 
 /// Walk `root`, parse every file `registry` matches, and build the full
-/// `Graph`: one `FileNode` + one `Def` per extracted def per file (wired
-/// with `Contains` edges), plus `Imports` edges between files.
-///
-/// Two passes: pass 1 parses and extracts every file (needed before pass 2,
-/// since resolving a Go import to a package directory requires knowing every
-/// file that ended up indexed in that directory). Parsers are reused per
-/// language (keyed by `Language::id()`), with the grammar re-set before each
-/// parse since it can vary by path within the same language (e.g. TSX).
+/// `Graph` from scratch (no previous run to reuse).
 pub fn index_repo(root: &Path, registry: &Registry) -> Result<Graph> {
+    let (graph, _extractions, _stats) = index_repo_incremental(root, registry, None)?;
+    Ok(graph)
+}
+
+/// Like [`index_repo`], but hash-gated against `prev`: files whose blake3
+/// hash matches a previous run reuse that run's `Extraction` instead of
+/// being re-parsed. The `Graph` is always rebuilt fresh from the full set of
+/// (reused + newly parsed) extractions — edges are cheap pure lookups, so
+/// there's no in-place patching and no risk of dangling ids. Deleted files
+/// drop out naturally since they're no longer in the discovered set; renames
+/// are just a delete + an add.
+pub fn index_repo_incremental(
+    root: &Path,
+    registry: &Registry,
+    prev: Option<(Graph, Vec<CachedExtraction>)>,
+) -> Result<(Graph, Vec<CachedExtraction>, IndexStats)> {
     let files = discover(root, registry);
+
+    let mut prev_extractions: HashMap<PathBuf, ([u8; 32], Extraction)> = prev
+        .map(|(_, extractions)| {
+            extractions
+                .into_iter()
+                .map(|(path, hash, extraction)| (path, (hash, extraction)))
+                .collect()
+        })
+        .unwrap_or_default();
 
     let mut graph = Graph::default();
     let mut parsers: HashMap<&'static str, Parser> = HashMap::new();
+    let mut stats = IndexStats::default();
 
-    // Pass 1: parse + extract each file, adding its FileNode and Defs (with
-    // Contains edges wired) to the graph. `extractions[i]` holds the
-    // per-file `Extraction` (for its imports) alongside the base offset of
-    // its defs in `graph.defs`, aligned by index with `files`/`graph.files`.
+    // Pass 1: hash every discovered file; reuse the previous `Extraction`
+    // when the hash is unchanged, otherwise parse + extract fresh. Adds each
+    // file's `FileNode` and `Def`s (with `Contains` edges wired) to the
+    // graph as we go. `hashes`/`extractions` stay aligned by index with
+    // `files`/`graph.files` for pass 2 and for building the returned cache.
+    let mut hashes: Vec<[u8; 32]> = Vec::with_capacity(files.len());
     let mut extractions: Vec<Extraction> = Vec::with_capacity(files.len());
 
     for (rel_path, lang) in &files {
         let full_path = root.join(rel_path);
         let src = std::fs::read_to_string(&full_path)
             .with_context(|| format!("reading {}", full_path.display()))?;
-        let hash = blake3::hash(src.as_bytes());
+        let hash = *blake3::hash(src.as_bytes()).as_bytes();
 
-        let parser = parsers.entry(lang.id()).or_default();
-        let grammar = lang.grammar(rel_path);
-        parser
-            .set_language(&grammar)
-            .with_context(|| format!("setting grammar for {}", rel_path.display()))?;
-        let tree = parser
-            .parse(&src, None)
-            .ok_or_else(|| anyhow!("failed to parse {}", rel_path.display()))?;
-
-        let extraction = lang.extract(&src, &tree);
+        let extraction = match prev_extractions.remove(rel_path) {
+            Some((prev_hash, prev_extraction)) if prev_hash == hash => {
+                stats.reused += 1;
+                prev_extraction
+            }
+            _ => {
+                stats.parsed += 1;
+                parse_extract(&mut parsers, *lang, rel_path, &src)?
+            }
+        };
 
         let file_id = graph.add_file(FileNode {
             path: rel_path.clone(),
-            hash: *hash.as_bytes(),
+            hash,
             lang: lang.id().to_string(),
         });
 
@@ -81,6 +112,7 @@ pub fn index_repo(root: &Path, registry: &Registry) -> Result<Graph> {
             graph.add_edge(parent_id, EdgeKind::Contains, node_id);
         }
 
+        hashes.push(hash);
         extractions.push(extraction);
     }
 
@@ -125,5 +157,29 @@ pub fn index_repo(root: &Path, registry: &Registry) -> Result<Graph> {
         }
     }
 
-    Ok(graph)
+    let cached: Vec<CachedExtraction> = files
+        .iter()
+        .zip(hashes)
+        .zip(extractions)
+        .map(|(((rel_path, _lang), hash), extraction)| (rel_path.clone(), hash, extraction))
+        .collect();
+
+    Ok((graph, cached, stats))
+}
+
+fn parse_extract(
+    parsers: &mut HashMap<&'static str, Parser>,
+    lang: &dyn Language,
+    rel_path: &Path,
+    src: &str,
+) -> Result<Extraction> {
+    let parser = parsers.entry(lang.id()).or_default();
+    let grammar = lang.grammar(rel_path);
+    parser
+        .set_language(&grammar)
+        .with_context(|| format!("setting grammar for {}", rel_path.display()))?;
+    let tree = parser
+        .parse(src, None)
+        .ok_or_else(|| anyhow!("failed to parse {}", rel_path.display()))?;
+    Ok(lang.extract(src, &tree))
 }
