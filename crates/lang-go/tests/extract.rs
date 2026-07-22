@@ -33,6 +33,29 @@ fn extracts_tests_subtests_and_computed() {
 }
 
 #[test]
+fn nested_t_run_chains_fully() {
+    let src = r#"package p
+
+import "testing"
+
+func TestFoo(t *testing.T) {
+	t.Run("outer", func(t *testing.T) {
+		t.Run("inner", func(t *testing.T) {})
+	})
+}
+"#;
+    let ex = extract(src);
+    let ids: Vec<_> = ex.defs.iter().filter(|d| d.kind == DefKind::TestCase)
+        .filter_map(|d| d.test_id.clone()).collect();
+    assert!(ids.contains(&vec!["TestFoo".into(), "outer".into()]));
+    assert!(ids.contains(&vec!["TestFoo".into(), "outer".into(), "inner".into()]));
+    // inner's parent is outer's def, not TestFoo
+    let outer = ex.defs.iter().position(|d| d.test_id.as_deref() == Some(&["TestFoo".into(), "outer".into()][..])).unwrap();
+    let inner = ex.defs.iter().find(|d| d.test_id.as_deref() == Some(&["TestFoo".into(), "outer".into(), "inner".into()][..])).unwrap();
+    assert_eq!(inner.parent, Some(outer));
+}
+
+#[test]
 fn resolves_module_internal_imports() {
     let root = Path::new("../../fixtures/go-app");
     let l = GoLanguage;

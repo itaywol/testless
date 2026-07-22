@@ -56,13 +56,12 @@ impl Language for GoLanguage {
         let first_line = go_mod.lines().next()?;
         let module_path = first_line.strip_prefix("module ")?.trim();
 
-        if let Some(dir) = raw.strip_prefix(&format!("{module_path}/")) {
-            return Some(PathBuf::from(dir));
-        }
-        if raw == module_path {
-            return Some(PathBuf::from("."));
-        }
-        None
+        // Only the `<module>/<dir>` sub-package form resolves to a directory;
+        // an import equal to the module path exactly (the module's own root
+        // package) has no caller/fixture needing it here, so it's left
+        // unhandled (falls through to `None`) rather than speculatively
+        // guessed at.
+        raw.strip_prefix(&format!("{module_path}/")).map(PathBuf::from)
     }
 }
 
@@ -167,45 +166,59 @@ fn is_test_function(name: &str, node: Node, src: &[u8]) -> bool {
     }
 }
 
-/// Walk a TestCase root's subtree for `t.Run(...)` / `b.Run(...)` calls,
+/// Walk a TestCase's subtree for `t.Run(...)` / `b.Run(...)` calls,
 /// emitting a child TestCase for each. A literal string first argument
 /// contributes its own segment to the chain; anything else contributes a
-/// single synthetic `<computed>` child per root (deduped via
-/// `used_synthetic`), per the contract.
+/// single synthetic `<computed>` child (deduped via `used_synthetic`, scoped
+/// to `enclosing_idx` — i.e. max one `<computed>` child per node, not per
+/// root). `enclosing_idx`/`enclosing_chain` identify the *immediately*
+/// enclosing subtest (which may itself be a nested `t.Run`, not necessarily
+/// the top-level root), so chains and parents thread correctly through
+/// arbitrary nesting: each `t.Run` match stops the generic recursion and
+/// instead recurses into its own callback body with itself as the new
+/// enclosing node and a fresh dedup flag, so sibling non-literal `Run`s
+/// under different parents don't dedupe against each other.
 fn walk_subtests(
     node: Node,
     src: &[u8],
     defs: &mut Vec<ExtractedDef>,
-    root_idx: usize,
-    root_test_id: &[String],
+    enclosing_idx: usize,
+    enclosing_chain: &[String],
     used_synthetic: &mut bool,
 ) {
-    if node.kind() == "call_expression" {
-        if let Some(func) = node.child_by_field_name("function") {
-            if func.kind() == "selector_expression" {
-                if let Some(field) = func.child_by_field_name("field") {
-                    if field.utf8_text(src).ok() == Some("Run") {
-                        handle_run_call(node, src, defs, root_idx, root_test_id, used_synthetic);
-                    }
-                }
-            }
-        }
+    if is_run_call(node, src) {
+        handle_run_call(node, src, defs, enclosing_idx, enclosing_chain, used_synthetic);
+        return;
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_subtests(child, src, defs, root_idx, root_test_id, used_synthetic);
+        walk_subtests(child, src, defs, enclosing_idx, enclosing_chain, used_synthetic);
     }
+}
+
+/// Is this a `call_expression` whose callee is `<something>.Run` (covers
+/// both `t.Run` and `b.Run` — matched by selector field name alone,
+/// regardless of the receiver variable's name).
+fn is_run_call(node: Node, src: &[u8]) -> bool {
+    node.kind() == "call_expression"
+        && node
+            .child_by_field_name("function")
+            .filter(|f| f.kind() == "selector_expression")
+            .and_then(|f| f.child_by_field_name("field"))
+            .and_then(|field| field.utf8_text(src).ok())
+            == Some("Run")
 }
 
 fn handle_run_call(
     call: Node,
     src: &[u8],
     defs: &mut Vec<ExtractedDef>,
-    root_idx: usize,
-    root_test_id: &[String],
+    enclosing_idx: usize,
+    enclosing_chain: &[String],
     used_synthetic: &mut bool,
 ) {
-    let first_arg = call.child_by_field_name("arguments").and_then(|a| a.named_child(0));
+    let args = call.child_by_field_name("arguments");
+    let first_arg = args.and_then(|a| a.named_child(0));
 
     let (segment, computed) = match first_arg {
         Some(n) if n.kind() == "interpreted_string_literal" => {
@@ -220,9 +233,19 @@ fn handle_run_call(
         }
     };
 
-    let mut test_id = root_test_id.to_vec();
+    let mut test_id = enclosing_chain.to_vec();
     test_id.push(segment.clone());
-    push_def(call, segment, DefKind::TestCase, defs, Some(root_idx), Some(test_id), computed);
+    let idx =
+        push_def(call, segment, DefKind::TestCase, defs, Some(enclosing_idx), Some(test_id.clone()), computed);
+
+    // Recurse into the callback body (`func(t *testing.T) { ... }`, the
+    // second argument) with this call as the new enclosing node, so any
+    // nested `t.Run` inside it chains off `test_id` / `idx` rather than the
+    // outer root, and gets its own independent synthetic-dedupe scope.
+    if let Some(callback) = args.and_then(|a| a.named_child(1)) {
+        let mut nested_used_synthetic = false;
+        walk_subtests(callback, src, defs, idx, &test_id, &mut nested_used_synthetic);
+    }
 }
 
 /// The unquoted text of an `interpreted_string_literal` (its
