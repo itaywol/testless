@@ -1,0 +1,13 @@
+[package]
+name = "pick-a-test"
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "pick-a-test"
+path = "src/main.rs"
+
+[dependencies]
+pick-a-test-core = { path = "../core" }
+pick-a-test-lang-ts = { path = "../lang-ts" }
+pick-a-test-lang-go = { path = "../lang-go" }
