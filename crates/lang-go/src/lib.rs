@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use pick_a_test_core::{DefKind, ExtractedDef, Extraction, ImportRef, Language};
+use testless_core::{DefKind, ExtractedDef, Extraction, ImportRef, Language};
 use tree_sitter::Node;
 
 pub struct GoLanguage;

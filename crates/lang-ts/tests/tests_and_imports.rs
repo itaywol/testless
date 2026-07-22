@@ -1,9 +1,9 @@
-use pick_a_test_core::{DefKind, Language};
-use pick_a_test_lang_ts::TsLanguage;
+use testless_core::{DefKind, Language};
+use testless_lang_ts::TsLanguage;
 use std::path::{Path, PathBuf};
 
 // re-use the extract() helper from extract.rs (copied verbatim; integration test files don't share modules)
-fn extract(src: &str) -> pick_a_test_core::Extraction {
+fn extract(src: &str) -> testless_core::Extraction {
     let lang = TsLanguage;
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&lang.grammar(std::path::Path::new("x.ts"))).unwrap();

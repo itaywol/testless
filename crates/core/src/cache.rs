@@ -15,9 +15,9 @@ pub type CachedExtraction = (PathBuf, [u8; 32], Extraction);
 /// prefix gives `load` something concrete to check: bump it whenever the
 /// cached types' shape changes, and old caches get rejected (and rebuilt)
 /// instead of misread.
-const CACHE_MAGIC: &[u8; 4] = b"PAT1";
+const CACHE_MAGIC: &[u8; 4] = b"TST1";
 
-/// On-disk cache of a previous index run, rooted at `{repo}/.pick-a-test/`.
+/// On-disk cache of a previous index run, rooted at `{repo}/.testless/`.
 ///
 /// Serialized with bincode, which is compact but not self-describing (no
 /// embedded schema/type info) — see [`CACHE_MAGIC`] for how `save`/`load`
@@ -62,14 +62,14 @@ mod tests {
     #[test]
     fn missing_cache_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
-        let cache = Cache { root: tmp.path().join(".pick-a-test") };
+        let cache = Cache { root: tmp.path().join(".testless") };
         assert!(cache.load().is_none());
     }
 
     #[test]
     fn corrupt_cache_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
-        let cache = Cache { root: tmp.path().join(".pick-a-test") };
+        let cache = Cache { root: tmp.path().join(".testless") };
         std::fs::create_dir_all(&cache.root).unwrap();
         std::fs::write(cache.root.join("graph.bin"), b"garbage").unwrap();
         assert!(cache.load().is_none());
@@ -78,7 +78,7 @@ mod tests {
     #[test]
     fn save_load_roundtrip() {
         let tmp = tempfile::tempdir().unwrap();
-        let cache = Cache { root: tmp.path().join(".pick-a-test") };
+        let cache = Cache { root: tmp.path().join(".testless") };
         let mut g = Graph::default();
         g.add_file(FileNode { path: "a.ts".into(), hash: [1; 32], lang: "ts".into() });
         cache.save(&g, &[]).unwrap();
@@ -90,10 +90,10 @@ mod tests {
     #[test]
     fn wrong_magic_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
-        let cache = Cache { root: tmp.path().join(".pick-a-test") };
+        let cache = Cache { root: tmp.path().join(".testless") };
         std::fs::create_dir_all(&cache.root).unwrap();
         let g = Graph::default();
-        let mut bytes = b"PAT9".to_vec();
+        let mut bytes = b"TST9".to_vec();
         bytes.extend(bincode::serialize(&(g, Vec::<crate::cache::CachedExtraction>::new())).unwrap());
         std::fs::write(cache.root.join("graph.bin"), bytes).unwrap();
         assert!(cache.load().is_none());
@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn save_creates_parent_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let cache = Cache { root: tmp.path().join(".pick-a-test") };
+        let cache = Cache { root: tmp.path().join(".testless") };
         assert!(!cache.root.exists());
         cache.save(&Graph::default(), &[]).unwrap();
         assert!(cache.file().exists());

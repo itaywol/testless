@@ -1,12 +1,12 @@
-use pick_a_test_core::{
+use testless_core::{
     indexer::{index_repo, index_repo_incremental},
     DefKind, EdgeKind, Registry,
 };
 
 fn registry() -> Registry {
     Registry::new(vec![
-        Box::new(pick_a_test_lang_ts::TsLanguage),
-        Box::new(pick_a_test_lang_go::GoLanguage),
+        Box::new(testless_lang_ts::TsLanguage),
+        Box::new(testless_lang_go::GoLanguage),
     ])
 }
 
@@ -77,7 +77,7 @@ fn incremental_reindex_reuses_unchanged_files_and_reparses_only_the_changed_one(
     let root = tmp.path();
     copy_dir(std::path::Path::new("../../fixtures/ts-app"), root);
 
-    let files_count = |g: &pick_a_test_core::Graph| g.files.len();
+    let files_count = |g: &testless_core::Graph| g.files.len();
 
     let (graph, extractions, stats) = index_repo_incremental(root, &registry(), None).unwrap();
     assert_eq!(stats.parsed, files_count(&graph));

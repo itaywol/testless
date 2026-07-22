@@ -4,15 +4,15 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 
-use pick_a_test_core::cache::Cache;
-use pick_a_test_core::graph::{DefKind, Graph};
-use pick_a_test_core::indexer::index_repo_incremental;
-use pick_a_test_core::Registry;
+use testless_core::cache::Cache;
+use testless_core::graph::{DefKind, Graph};
+use testless_core::indexer::index_repo_incremental;
+use testless_core::Registry;
 
 #[derive(Parser)]
 #[command(
-    name = "pick-a-test",
-    after_help = "Examples:\n  pick-a-test index\n  pick-a-test stats\n  pick-a-test completion zsh > _pick-a-test"
+    name = "testless",
+    after_help = "Examples:\n  testless index\n  testless stats\n  testless completion zsh > _testless"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -38,13 +38,13 @@ enum Cmd {
 
 fn registry() -> Registry {
     Registry::new(vec![
-        Box::new(pick_a_test_lang_ts::TsLanguage),
-        Box::new(pick_a_test_lang_go::GoLanguage),
+        Box::new(testless_lang_ts::TsLanguage),
+        Box::new(testless_lang_go::GoLanguage),
     ])
 }
 
 fn cache_for(cwd: &std::path::Path) -> Cache {
-    Cache { root: cwd.join(".pick-a-test") }
+    Cache { root: cwd.join(".testless") }
 }
 
 fn count_tests(graph: &Graph) -> usize {
@@ -97,7 +97,7 @@ fn cmd_stats() -> Result<()> {
     let cwd = std::env::current_dir().context("getting current directory")?;
     let cache = cache_for(&cwd);
     let Some((graph, _extractions)) = cache.load() else {
-        anyhow::bail!("no index — run: pick-a-test index");
+        anyhow::bail!("no index — run: testless index");
     };
 
     let files = graph.files.len();
@@ -126,7 +126,7 @@ fn cmd_stats() -> Result<()> {
 }
 
 fn cmd_completion(shell: clap_complete::Shell) -> Result<()> {
-    clap_complete::generate(shell, &mut Cli::command(), "pick-a-test", &mut std::io::stdout());
+    clap_complete::generate(shell, &mut Cli::command(), "testless", &mut std::io::stdout());
     Ok(())
 }
 

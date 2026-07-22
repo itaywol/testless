@@ -20,11 +20,11 @@ fn tmp_fixture() -> tempfile::TempDir {
 #[test]
 fn index_then_stats_json() {
     let tmp = tmp_fixture();
-    Command::cargo_bin("pick-a-test").unwrap()
+    Command::cargo_bin("testless").unwrap()
         .arg("index").current_dir(tmp.path())
         .assert().success()
         .stdout(predicate::str::contains("\"defs\""));   // piped => JSON
-    Command::cargo_bin("pick-a-test").unwrap()
+    Command::cargo_bin("testless").unwrap()
         .arg("stats").current_dir(tmp.path())
         .assert().success()
         .stdout(predicate::str::contains("\"tests\""));
@@ -33,22 +33,22 @@ fn index_then_stats_json() {
 #[test]
 fn stats_without_index_hints() {
     let tmp = tempfile::tempdir().unwrap();
-    Command::cargo_bin("pick-a-test").unwrap()
+    Command::cargo_bin("testless").unwrap()
         .arg("stats").current_dir(tmp.path())
         .assert().failure()
-        .stderr(predicate::str::contains("pick-a-test index"));
+        .stderr(predicate::str::contains("testless index"));
 }
 
 #[test]
 fn index_twice_reuses_cache() {
     let tmp = tmp_fixture();
-    let first = Command::cargo_bin("pick-a-test").unwrap()
+    let first = Command::cargo_bin("testless").unwrap()
         .arg("index").current_dir(tmp.path())
         .assert().success();
     let first_out = String::from_utf8(first.get_output().stdout.clone()).unwrap();
     assert!(first_out.contains("\"parsed\""), "first run output: {first_out}");
 
-    let second = Command::cargo_bin("pick-a-test").unwrap()
+    let second = Command::cargo_bin("testless").unwrap()
         .arg("index").current_dir(tmp.path())
         .assert().success();
     let second_out = String::from_utf8(second.get_output().stdout.clone()).unwrap();

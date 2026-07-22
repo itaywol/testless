@@ -1,8 +1,8 @@
-use pick_a_test_core::{DefKind, Language};
-use pick_a_test_lang_go::GoLanguage;
+use testless_core::{DefKind, Language};
+use testless_lang_go::GoLanguage;
 use std::path::{Path, PathBuf};
 
-fn extract(src: &str) -> pick_a_test_core::Extraction {
+fn extract(src: &str) -> testless_core::Extraction {
     let lang = GoLanguage;
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&lang.grammar(Path::new("x.go"))).unwrap();

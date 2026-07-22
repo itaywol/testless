@@ -7,7 +7,7 @@ use crate::language::{Language, Registry};
 /// Walk `root`, respecting `.gitignore` and hard-skipping known noise
 /// directories, returning repo-relative sorted paths matched by `registry`.
 pub fn discover<'r>(root: &Path, registry: &'r Registry) -> Vec<(PathBuf, &'r dyn Language)> {
-    const SKIP_DIRS: &[&str] = &["node_modules", "vendor", "target", ".pick-a-test"];
+    const SKIP_DIRS: &[&str] = &["node_modules", "vendor", "target", ".testless"];
 
     let mut out = Vec::new();
 

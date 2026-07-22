@@ -1,9 +1,9 @@
 [package]
-name = "pick-a-test-lang-ts"
+name = "testless-lang-ts"
 version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-pick-a-test-core = { path = "../core" }
+testless-core = { path = "../core" }
 tree-sitter = "0.26.11"
 tree-sitter-typescript = "0.23.2"
