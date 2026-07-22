@@ -14,7 +14,8 @@ pub struct Cache {
 }
 
 impl Cache {
-    fn file(&self) -> PathBuf {
+    /// Path to the on-disk cache file, `{root}/graph.bin`.
+    pub fn file(&self) -> PathBuf {
         self.root.join("graph.bin")
     }
 

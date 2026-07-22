@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
 use pick_a_test_core::cache::Cache;
-use pick_a_test_core::graph::DefKind;
+use pick_a_test_core::graph::{DefKind, Graph};
 use pick_a_test_core::indexer::index_repo_incremental;
 use pick_a_test_core::Registry;
 
@@ -39,6 +39,10 @@ fn cache_for(cwd: &std::path::Path) -> Cache {
     Cache { root: cwd.join(".pick-a-test") }
 }
 
+fn count_tests(graph: &Graph) -> usize {
+    graph.defs.iter().filter(|d| d.kind == DefKind::TestCase).count()
+}
+
 fn cmd_index(full: bool) -> Result<()> {
     let cwd = std::env::current_dir().context("getting current directory")?;
     let cache = cache_for(&cwd);
@@ -61,7 +65,7 @@ fn cmd_index(full: bool) -> Result<()> {
 
     let files = graph.files.len();
     let defs = graph.defs.len();
-    let tests = graph.defs.iter().filter(|d| d.kind == DefKind::TestCase).count();
+    let tests = count_tests(&graph);
 
     if std::io::stdout().is_terminal() {
         println!("Indexed {files} files: {defs} defs ({tests} tests)");
@@ -90,11 +94,9 @@ fn cmd_stats() -> Result<()> {
 
     let files = graph.files.len();
     let defs = graph.defs.len();
-    let tests = graph.defs.iter().filter(|d| d.kind == DefKind::TestCase).count();
+    let tests = count_tests(&graph);
     let edges = graph.edges.len();
-    let cache_bytes = std::fs::metadata(cache.root.join("graph.bin"))
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let cache_bytes = std::fs::metadata(cache.file()).map(|m| m.len()).unwrap_or(0);
 
     if std::io::stdout().is_terminal() {
         println!("Cache: {}", cache.root.display());
