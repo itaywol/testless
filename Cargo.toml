@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/lang-ts", "crates/lang-go", "crates/cli"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"

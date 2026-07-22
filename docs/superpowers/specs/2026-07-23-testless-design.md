@@ -1,4 +1,4 @@
-# pick-a-test — Design Spec
+# testless — Design Spec
 
 Date: 2026-07-23
 Status: approved pending review
@@ -11,7 +11,7 @@ require a paid platform with runtime coverage collection (Wallaby, Datadog Test
 Impact Analysis). Nothing free and local selects at **function level** via static
 analysis.
 
-`pick-a-test` is a Rust CLI that, given a change (worktree diff or rev range),
+`testless` is a Rust CLI that, given a change (worktree diff or rev range),
 outputs the set of individual tests impacted by that change, for test runners to
 consume. Launch languages: TypeScript and Go, built simultaneously to keep the
 engine honest. New languages must be cheap to add.
@@ -34,12 +34,12 @@ engine honest. New languages must be cheap to add.
 Rust workspace:
 
 ```
-pick-a-test/
+testless/
 ├── crates/
 │   ├── core/      # language-agnostic engine
 │   ├── lang-ts/   # TypeScript resolver plugin
 │   ├── lang-go/   # Go resolver plugin
-│   └── cli/       # pick-a-test binary
+│   └── cli/       # testless binary
 ├── fixtures/
 │   ├── ts-app/    # nasty-on-purpose TS fixture repo
 │   └── go-app/    # nasty-on-purpose Go fixture repo
@@ -52,7 +52,7 @@ pick-a-test/
 - Graph build + incremental update (re-parse only content-hash-changed files)
 - Structural differ (old tree vs new tree → changed defs)
 - Impact walker (reverse reachability + widening rules)
-- Cache persistence (single file under `.pick-a-test/`, bincode/rkyv)
+- Cache persistence (single file under `.testless/`, bincode/rkyv)
 - Output serialization
 - Git integration (diff file list, rev range, rename detection)
 
@@ -119,17 +119,17 @@ Widening during walk:
 - Go interface method call, unresolved receiver → seed the method on **all**
   implementing types
 
-Escape-hatch config `pickatest.toml`: `always-run` globs (smoke tests), `ignore`
+Escape-hatch config `testless.toml`: `always-run` globs (smoke tests), `ignore`
 globs (generated code).
 
 ## CLI
 
 ```
-pick-a-test select [--from <rev>] [--to <rev|WORKTREE>] [--format json|text|args]
-pick-a-test index  [--full]     # explicit (re)build; select auto-indexes incrementally
-pick-a-test why <test-id>       # print edge path from change to this test
-pick-a-test stats               # graph size, cache health
-pick-a-test completion <shell>  # zsh|bash|fish completions
+testless select [--from <rev>] [--to <rev|WORKTREE>] [--format json|text|args]
+testless index  [--full]     # explicit (re)build; select auto-indexes incrementally
+testless why <test-id>       # print edge path from change to this test
+testless stats               # graph size, cache health
+testless completion <shell>  # zsh|bash|fish completions
 ```
 
 Defaults: `--from HEAD --to WORKTREE`. CI usage: `--from origin/main --to HEAD`.
@@ -172,7 +172,7 @@ First-class, not an afterthought. Standard crates, thin glue:
 
 Principles: machine output (stdout) and human chrome (stderr) never mix; every
 degraded state prints *why* and *what the tool did about it*; zero-config first
-run (`pick-a-test select` in any repo just works or says exactly what's missing).
+run (`testless select` in any repo just works or says exactly what's missing).
 
 ## Testing strategy (TDD)
 
