@@ -7,3 +7,4 @@ edition.workspace = true
 bincode = "1"
 blake3 = "1.8.5"
 serde = { version = "1.0.229", features = ["derive"] }
+tree-sitter = "0.26.11"
