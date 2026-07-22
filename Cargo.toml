@@ -5,3 +5,5 @@ members = ["crates/core", "crates/lang-ts", "crates/lang-go", "crates/cli"]
 [workspace.package]
 edition = "2021"
 license = "MIT"
+description = "Function-level test impact analysis via static AST"
+repository = "https://github.com/itaywol/testless"
