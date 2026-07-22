@@ -11,3 +11,7 @@ path = "src/main.rs"
 pick-a-test-core = { path = "../core" }
 pick-a-test-lang-ts = { path = "../lang-ts" }
 pick-a-test-lang-go = { path = "../lang-go" }
+
+[dev-dependencies]
+assert_cmd = "2.2.2"
+predicates = "3.1.4"
