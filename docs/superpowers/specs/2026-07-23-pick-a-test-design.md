@@ -129,6 +129,7 @@ pick-a-test select [--from <rev>] [--to <rev|WORKTREE>] [--format json|text|args
 pick-a-test index  [--full]     # explicit (re)build; select auto-indexes incrementally
 pick-a-test why <test-id>       # print edge path from change to this test
 pick-a-test stats               # graph size, cache health
+pick-a-test completion <shell>  # zsh|bash|fish completions
 ```
 
 Defaults: `--from HEAD --to WORKTREE`. CI usage: `--from origin/main --to HEAD`.
@@ -150,6 +151,28 @@ JSON output:
 `mode: "run_all"` (+ `reason`) on any internal failure. `--format args` emits
 runner-consumable invocations (`vitest run <file> -t "<pattern>"`,
 `go test <pkg> -run '^TestAdd$/^negatives$'`) — formatting only, tool never runs tests.
+
+## CLI UX
+
+First-class, not an afterthought. Standard crates, thin glue:
+
+| Concern | Behavior | Crate |
+|---|---|---|
+| Help | `clap` derive: rich `--help` with an EXAMPLES section per subcommand; typo suggestions ("did you mean `select`?") | clap |
+| Completions | `completion zsh\|bash\|fish` generates scripts; completes subcommands, flags, `--format` values | clap_complete |
+| Man page | Generated at build time, shipped in release artifacts | clap_mangen |
+| Progress | Indexing shows progress bar (files parsed, files/s, ETA) on **stderr**, TTY only; silent when piped | indicatif |
+| Output modes | stdout TTY → human format: colored summary table, selection counts, timing footer (`17/1240 tests · 3 widenings · 42ms`). stdout piped → JSON automatically. Explicit `--format` always wins | anstream |
+| Color | Respects `NO_COLOR`, `CLICOLOR_FORCE`, `--no-color` | anstream |
+| Errors | Actionable, hint-suffixed: `not a git repository — run inside a repo`, `cache corrupt — rebuilt automatically`. Never a bare panic/backtrace | anyhow + custom display |
+| `why` output | Colored edge-path tree: change → def → … → test, one hop per line | — |
+| `stats` | At-a-glance dashboard: files/defs/edges counts, cache size + freshness, tier-2 (SCIP) availability per language, last index duration | — |
+| Verbosity | `-q` (selection only, no footer), `-v` (walk decisions: seeds, widenings and their causes) | — |
+| Exit codes | `0` selection produced · `2` run_all fallback (still valid output) · `1` hard error. Documented in `--help` | — |
+
+Principles: machine output (stdout) and human chrome (stderr) never mix; every
+degraded state prints *why* and *what the tool did about it*; zero-config first
+run (`pick-a-test select` in any repo just works or says exactly what's missing).
 
 ## Testing strategy (TDD)
 
