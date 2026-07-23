@@ -629,6 +629,7 @@ dependencies = [
  "tempfile",
  "testless-core",
  "testless-lang-go",
+ "testless-lang-rust",
  "testless-lang-ts",
 ]
 

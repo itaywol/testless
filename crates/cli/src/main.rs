@@ -40,6 +40,7 @@ fn registry() -> Registry {
     Registry::new(vec![
         Box::new(testless_lang_ts::TsLanguage),
         Box::new(testless_lang_go::GoLanguage),
+        Box::new(testless_lang_rust::RustLanguage),
     ])
 }
 
