@@ -52,3 +52,7 @@ jobs:
         run: ./target/release/testless stats | jq -e '.tests > 0'
       - name: Changes (clean tree = empty selection)
         run: ./target/release/testless changes --from HEAD | jq -e '.mode == "selection" and (.seeds | length) == 0'
+      - name: Select (clean tree = empty selection)
+        run: ./target/release/testless select --from HEAD | jq -e '.mode=="selection" and (.tests|length)==0'
+      - name: Select (prior commit = real selection or run_all)
+        run: ./target/release/testless select --from HEAD~1 | jq -e '.mode=="selection" or .mode=="run_all"'
