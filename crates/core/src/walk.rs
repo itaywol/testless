@@ -13,9 +13,11 @@
 //!   to D).
 //! - If D is a `ModuleInit`: every file in the transitive importer closure
 //!   of D's file (including D's own file) has its `ModuleInit` enqueued and
-//!   its `TestCase` defs collected directly (importing a module re-runs
-//!   that module's top-level side effects, and running any test in an
-//!   importing file re-runs the whole import chain).
+//!   its `TestCase` defs enqueued too (not just collected — a widened test
+//!   must keep propagating through its own callers just like any other
+//!   visited `TestCase`; importing a module re-runs that module's top-level
+//!   side effects, and running any test in an importing file re-runs the
+//!   whole import chain).
 //!
 //! `TestCase` defs are collected when visited, but the walk still continues
 //! through them: a test helper (itself a `TestCase`) that's called by other
@@ -82,7 +84,13 @@ pub fn impacted_tests(graph: &Graph, seeds: &[Seed]) -> Vec<DefId> {
                 }
                 for (id, file_def) in graph.defs_in_file(file) {
                     if file_def.kind == DefKind::TestCase {
-                        tests.insert(id);
+                        // Enqueue (not just collect) so the main loop's
+                        // uniform TestCase handling both records the test
+                        // AND keeps propagating through its own callers —
+                        // otherwise a test helper collected here would
+                        // silently stop the walk short of any external
+                        // caller of that helper.
+                        enqueue(&mut queue, &mut visited, id);
                     }
                 }
             }
@@ -347,6 +355,79 @@ mod tests {
         let mut expected = vec![helper, test_t];
         expected.sort();
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn module_init_widened_test_propagates_to_external_caller() {
+        // File A: module_init M_a, helper TestCase H (no import relationship
+        // needed here — H is collected directly as a TestCase in A's own
+        // file during the module_init importer-closure step). File B:
+        // TestCase T_ext calls H directly (Calls{Resolved(H)}).
+        // Seed M_a -> H is collected via the module_init closure step, but
+        // that collection must ALSO enqueue H (not just record it as a
+        // test) so the main loop keeps walking through H's callers and
+        // reaches T_ext, per "test helper propagation": a test helper
+        // reached via ANY path (including module-init widening, not just
+        // ordinary caller chains) must keep propagating to its own callers.
+        let mut g = g();
+        let fa = file(&mut g, "a.ts");
+        let fb = file(&mut g, "b.ts");
+
+        let m_a = def(&mut g, "<module>", DefKind::ModuleInit, fa);
+        let helper_h = def(&mut g, "h", DefKind::TestCase, fa);
+        let t_ext = def(&mut g, "t_ext", DefKind::TestCase, fb);
+        g.add_edge(Edge::Calls {
+            from: t_ext,
+            to: CallTarget::Resolved(helper_h),
+        });
+
+        let result = impacted_tests(&g, &[seed(m_a)]);
+        let mut expected = vec![helper_h, t_ext];
+        expected.sort();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn unknown_widening_fires_for_def_reached_mid_walk() {
+        // Seed X; Y calls X (Calls{from: Y, to: Resolved(X)}), so visiting
+        // (seeded) X enqueues Y as its caller — Y is reached MID-WALK, not
+        // itself a seed. Elsewhere, test T has an unresolved call matching
+        // Y's short name. Widening must be evaluated for every def dequeued
+        // during the walk (not just seeds), so T must still be selected.
+        let mut g = g();
+        let f = file(&mut g, "a.ts");
+        let x = def(&mut g, "x", DefKind::Function, f);
+        let y = def(&mut g, "y", DefKind::Function, f);
+        let t = def(&mut g, "t", DefKind::TestCase, f);
+        g.add_edge(Edge::Calls {
+            from: y,
+            to: CallTarget::Resolved(x),
+        });
+        g.add_edge(Edge::Calls {
+            from: t,
+            to: CallTarget::Unknown("y".into()),
+        });
+
+        let result = impacted_tests(&g, &[seed(x)]);
+        assert_eq!(result, vec![t]);
+    }
+
+    #[test]
+    fn dotted_method_name_widens_via_unknown_call() {
+        // Visited def "Calc.push" (a Method, seeded directly); test with
+        // Calls{Unknown("push")} must match on the last `.`-segment of the
+        // dotted method name.
+        let mut g = g();
+        let f = file(&mut g, "a.ts");
+        let push_method = def(&mut g, "Calc.push", DefKind::Method, f);
+        let t = def(&mut g, "t", DefKind::TestCase, f);
+        g.add_edge(Edge::Calls {
+            from: t,
+            to: CallTarget::Unknown("push".into()),
+        });
+
+        let result = impacted_tests(&g, &[seed(push_method)]);
+        assert_eq!(result, vec![t]);
     }
 
     #[test]
