@@ -214,3 +214,28 @@ fn unresolved_calls_become_unknown_markers() {
         .iter()
         .any(|e| matches!(e, Edge::Calls { to: CallTarget::Unknown(n), .. } if n == "log")));
 }
+
+#[test]
+fn self_only_candidate_recursion_still_widens_to_unknown() {
+    // `solo` recursively calls itself and is the *only* def named `solo` in
+    // scope, so every raw candidate is filtered out by the self-edge guard.
+    // The ref must still yield ≥1 edge — it falls through to `Unknown`
+    // rather than silently vanishing, since a same-named symbol whose
+    // import failed to resolve would look identical and must not be
+    // dropped without a trace.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("src/solo.ts"),
+        "export function solo(n: number): number { return n <= 1 ? 1 : solo(n - 1); }\n",
+    )
+    .unwrap();
+
+    let g = index_repo(root, &registry()).unwrap();
+    let solo = find_def(&g, "solo");
+    assert!(g.edges.contains(&Edge::Calls {
+        from: solo,
+        to: CallTarget::Unknown("solo".to_string())
+    }));
+}

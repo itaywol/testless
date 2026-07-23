@@ -224,23 +224,32 @@ pub fn index_repo_incremental(
 
         for r in &extraction.calls {
             let from = DefId((base + r.from_def) as u32);
-            let candidates = candidates_for(&r.name);
-            if candidates.is_empty() {
-                if unknown_seen.insert((from, r.name.clone())) {
-                    graph.add_edge(Edge::Calls {
-                        from,
-                        to: CallTarget::Unknown(r.name.clone()),
-                    });
+            // `emitted` tracks whether this ref produced at least one
+            // `Resolved` edge (new or already-deduped) — not just whether
+            // `candidates` was non-empty. A ref whose only candidates are
+            // all self-edges (e.g. recursion where the recursive callee is
+            // the sole same-named def in scope) must still widen to
+            // `Unknown` rather than silently vanishing: a real cross-file
+            // callee with the same name whose import failed to resolve
+            // would look identical, and dropping it without a trace would
+            // violate "every call ref yields >=1 edge".
+            let mut emitted = false;
+            for c in candidates_for(&r.name) {
+                if c != from {
+                    emitted = true;
+                    if calls_seen.insert((from, c)) {
+                        graph.add_edge(Edge::Calls {
+                            from,
+                            to: CallTarget::Resolved(c),
+                        });
+                    }
                 }
-                continue;
             }
-            for c in candidates {
-                if c != from && calls_seen.insert((from, c)) {
-                    graph.add_edge(Edge::Calls {
-                        from,
-                        to: CallTarget::Resolved(c),
-                    });
-                }
+            if !emitted && unknown_seen.insert((from, r.name.clone())) {
+                graph.add_edge(Edge::Calls {
+                    from,
+                    to: CallTarget::Unknown(r.name.clone()),
+                });
             }
         }
 
