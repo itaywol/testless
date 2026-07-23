@@ -1,7 +1,17 @@
 use testless_core::{
     indexer::{index_repo, index_repo_incremental},
-    DefKind, Edge, FileId, Registry,
+    CallTarget, DefId, DefKind, Edge, FileId, Graph, Registry,
 };
+
+/// First def whose `name` matches → its `DefId` (position in `g.defs`).
+fn find_def(g: &Graph, name: &str) -> DefId {
+    DefId(
+        g.defs
+            .iter()
+            .position(|d| d.name == name)
+            .unwrap_or_else(|| panic!("no def named {name:?}")) as u32,
+    )
+}
 
 fn registry() -> Registry {
     Registry::new(vec![
@@ -152,4 +162,55 @@ fn incremental_reindex_reuses_unchanged_files_and_reparses_only_the_changed_one(
         .any(|d| d.name == "add" && d.kind == DefKind::Function));
     // Defs from an entirely untouched file (format.ts) are still present too.
     assert!(graph2.defs.iter().any(|d| d.kind == DefKind::TestCase));
+}
+
+#[test]
+fn resolves_cross_file_call_edges_ts() {
+    let g = index_repo(std::path::Path::new("../../fixtures/ts-app"), &registry()).unwrap();
+    let fmt = find_def(&g, "fmt");
+    let add = find_def(&g, "add");
+    assert!(g.edges.contains(&Edge::Calls {
+        from: fmt,
+        to: CallTarget::Resolved(add)
+    }));
+    // test → add edge too
+    let neg = g
+        .defs
+        .iter()
+        .position(|d| d.test_id.as_deref() == Some(&["add".into(), "handles negatives".into()][..]))
+        .map(|i| DefId(i as u32))
+        .unwrap();
+    assert!(g.edges.contains(&Edge::Calls {
+        from: neg,
+        to: CallTarget::Resolved(add)
+    }));
+}
+
+#[test]
+fn resolves_cross_package_go_and_cross_module_rust() {
+    let g = index_repo(std::path::Path::new("../../fixtures/go-app"), &registry()).unwrap();
+    let f = find_def(&g, "Fmt");
+    let add = find_def(&g, "Add");
+    assert!(g.edges.contains(&Edge::Calls {
+        from: f,
+        to: CallTarget::Resolved(add)
+    }));
+
+    let g = index_repo(std::path::Path::new("../../fixtures/rust-app"), &registry()).unwrap();
+    let f = find_def(&g, "fmt");
+    let add = find_def(&g, "add");
+    assert!(g.edges.contains(&Edge::Calls {
+        from: f,
+        to: CallTarget::Resolved(add)
+    }));
+}
+
+#[test]
+fn unresolved_calls_become_unknown_markers() {
+    // ts fixture: console.log(...) at top level → callee `log` qualifier `console` unresolvable
+    let g = index_repo(std::path::Path::new("../../fixtures/ts-app"), &registry()).unwrap();
+    assert!(g
+        .edges
+        .iter()
+        .any(|e| matches!(e, Edge::Calls { to: CallTarget::Unknown(n), .. } if n == "log")));
 }

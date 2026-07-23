@@ -6,7 +6,7 @@ use tree_sitter::Parser;
 
 use crate::cache::CachedExtraction;
 use crate::discover::discover;
-use crate::graph::{Def, DefId, Edge, FileId, FileNode, Graph};
+use crate::graph::{CallTarget, Def, DefId, Edge, FileId, FileNode, Graph};
 use crate::language::{Extraction, Language, Registry};
 
 /// Counts of work done by [`index_repo_incremental`]: how many files were
@@ -59,6 +59,10 @@ pub fn index_repo_incremental(
     // `files`/`graph.files` for pass 2 and for building the returned cache.
     let mut hashes: Vec<[u8; 32]> = Vec::with_capacity(files.len());
     let mut extractions: Vec<Extraction> = Vec::with_capacity(files.len());
+    // Per-file base offset into `graph.defs`, aligned by index with
+    // `files`/`extractions` — lets pass 3 map an `ExtractedRef.from_def`
+    // (an index into that file's own `Extraction.defs`) back to a `DefId`.
+    let mut file_def_base: Vec<usize> = Vec::with_capacity(files.len());
 
     for (rel_path, lang) in &files {
         let full_path = root.join(rel_path);
@@ -84,6 +88,7 @@ pub fn index_repo_incremental(
         });
 
         let base = graph.defs.len();
+        file_def_base.push(base);
         for def in &extraction.defs {
             graph.add_def(Def {
                 name: def.name.clone(),
@@ -164,6 +169,86 @@ pub fn index_repo_incremental(
                         from: file_id,
                         to: target_id,
                     });
+                }
+            }
+        }
+    }
+
+    // Pass 3: resolve calls/reads to tier-1 candidates. Scope for a ref in
+    // file F is F itself plus every file F `Imports` (reusing `seen`, which
+    // pass 2 already built as exactly that from/to set). Defs are indexed
+    // under their *short* name — a method def like `Calc.push` is indexed
+    // under `push` too — so a bare-identifier ref matches both plain
+    // functions and qualified methods whether or not `ref.qualifier` is
+    // set (the receiver variable rarely equals the type name, so this is a
+    // deliberate over-approximation). `ModuleInit` defs (name `<module>`)
+    // are excluded from candidacy since nothing ever references them by
+    // name.
+    let mut imports_of: HashMap<FileId, Vec<FileId>> = HashMap::new();
+    for (from, to) in &seen {
+        imports_of.entry(*from).or_default().push(*to);
+    }
+
+    let mut by_short_name: HashMap<(FileId, String), Vec<DefId>> = HashMap::new();
+    for (i, def) in graph.defs.iter().enumerate() {
+        if def.kind == crate::graph::DefKind::ModuleInit {
+            continue;
+        }
+        let short = def.name.rsplit('.').next().unwrap_or(&def.name).to_string();
+        by_short_name
+            .entry((def.file, short))
+            .or_default()
+            .push(DefId(i as u32));
+    }
+
+    let mut calls_seen: HashSet<(DefId, DefId)> = HashSet::new();
+    let mut reads_seen: HashSet<(DefId, DefId)> = HashSet::new();
+    let mut unknown_seen: HashSet<(DefId, String)> = HashSet::new();
+
+    for (file_idx, extraction) in extractions.iter().enumerate() {
+        let file_id = FileId(file_idx as u32);
+        let base = file_def_base[file_idx];
+
+        let mut scope: Vec<FileId> = vec![file_id];
+        if let Some(targets) = imports_of.get(&file_id) {
+            scope.extend(targets.iter().copied());
+        }
+        let candidates_for = |name: &str| -> Vec<DefId> {
+            scope
+                .iter()
+                .filter_map(|f| by_short_name.get(&(*f, name.to_string())))
+                .flatten()
+                .copied()
+                .collect()
+        };
+
+        for r in &extraction.calls {
+            let from = DefId((base + r.from_def) as u32);
+            let candidates = candidates_for(&r.name);
+            if candidates.is_empty() {
+                if unknown_seen.insert((from, r.name.clone())) {
+                    graph.add_edge(Edge::Calls {
+                        from,
+                        to: CallTarget::Unknown(r.name.clone()),
+                    });
+                }
+                continue;
+            }
+            for c in candidates {
+                if c != from && calls_seen.insert((from, c)) {
+                    graph.add_edge(Edge::Calls {
+                        from,
+                        to: CallTarget::Resolved(c),
+                    });
+                }
+            }
+        }
+
+        for r in &extraction.reads {
+            let from = DefId((base + r.from_def) as u32);
+            for c in candidates_for(&r.name) {
+                if c != from && reads_seen.insert((from, c)) {
+                    graph.add_edge(Edge::Reads { from, to: c });
                 }
             }
         }
