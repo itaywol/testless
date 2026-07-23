@@ -35,7 +35,8 @@ impl Language for RustLanguage {
             parent: None,
         });
 
-        walk_items(root, src_bytes, &mut defs);
+        let mut mod_stack: Vec<String> = Vec::new();
+        walk_items(root, src_bytes, &mut defs, &mut mod_stack);
 
         // Imports (`use`/`mod x;`) are handled in a later task; none
         // collected here.
@@ -50,23 +51,69 @@ impl Language for RustLanguage {
 /// Single dispatch point for the walker: every item kind this extractor
 /// cares about is matched here, so later tasks (test-case detection,
 /// imports) extend this match rather than rewriting the walk.
-fn walk_items(node: Node, src: &[u8], defs: &mut Vec<ExtractedDef>) {
+///
+/// `attribute_item` nodes are siblings that precede the item they
+/// annotate (not children of it), so we accumulate them in `pending_attrs`
+/// as we walk and hand them to the next real item. `mod_stack` carries the
+/// chain of enclosing inline-`mod` names, used to build `test_id`s.
+fn walk_items(node: Node, src: &[u8], defs: &mut Vec<ExtractedDef>, mod_stack: &mut Vec<String>) {
     let mut cursor = node.walk();
+    let mut pending_attrs: Vec<Node> = Vec::new();
     for child in node.children(&mut cursor) {
         match child.kind() {
-            "function_item" => handle_function_item(child, src, defs),
-            "impl_item" => handle_impl_item(child, src, defs),
-            "struct_item" | "enum_item" | "trait_item" => handle_type_item(child, src, defs),
-            "mod_item" => handle_mod_item(child, src, defs),
-            _ => {}
+            "attribute_item" => pending_attrs.push(child),
+            // Comments between an attribute and the item it annotates
+            // don't break the association.
+            "line_comment" | "block_comment" => {}
+            "function_item" => {
+                handle_function_item(child, src, defs, mod_stack, &pending_attrs);
+                pending_attrs.clear();
+            }
+            "impl_item" => {
+                handle_impl_item(child, src, defs);
+                pending_attrs.clear();
+            }
+            "struct_item" | "enum_item" | "trait_item" => {
+                handle_type_item(child, src, defs);
+                pending_attrs.clear();
+            }
+            "mod_item" => {
+                handle_mod_item(child, src, defs, mod_stack);
+                pending_attrs.clear();
+            }
+            _ => pending_attrs.clear(),
         }
     }
 }
 
-fn handle_function_item(node: Node, src: &[u8], defs: &mut Vec<ExtractedDef>) {
+fn handle_function_item(
+    node: Node,
+    src: &[u8],
+    defs: &mut Vec<ExtractedDef>,
+    mod_stack: &[String],
+    attrs: &[Node],
+) {
     let Some(name_node) = node.child_by_field_name("name") else { return };
     let Ok(name) = name_node.utf8_text(src) else { return };
-    push_def(node, name.to_string(), DefKind::Function, defs);
+
+    if attrs.iter().any(|attr| is_test_attribute(*attr, src)) {
+        let mut test_id = mod_stack.to_vec();
+        test_id.push(name.to_string());
+        push_test_def(node, name.to_string(), test_id, defs);
+    } else {
+        push_def(node, name.to_string(), DefKind::Function, defs);
+    }
+}
+
+/// Whether an `attribute_item` node marks its function as a test: its
+/// path's last `::` segment is `test` or `bench` (covers `#[test]`,
+/// `#[tokio::test]`, `#[bench]`), or the whole path is exactly `rstest`
+/// (whose own last segment is `rstest`, not `test`).
+fn is_test_attribute(attr_item: Node, src: &[u8]) -> bool {
+    let Some(attribute) = attr_item.named_child(0) else { return false };
+    let Some(path_node) = attribute.named_child(0) else { return false };
+    let Ok(path) = path_node.utf8_text(src) else { return false };
+    path == "rstest" || matches!(path.rsplit("::").next(), Some("test") | Some("bench"))
 }
 
 /// `struct_item` / `enum_item` / `trait_item` -> Class, named by the `name`
@@ -100,10 +147,17 @@ fn handle_impl_item(node: Node, src: &[u8], defs: &mut Vec<ExtractedDef>) {
 /// `mod_item` with an inline body: recurse into its `declaration_list` so
 /// defs nested in inline modules are extracted flat (`mod x;` without a
 /// body is an import, handled in a later task, and skipped here since it
-/// has no `body` field to recurse into).
-fn handle_mod_item(node: Node, src: &[u8], defs: &mut Vec<ExtractedDef>) {
+/// has no `body` field to recurse into). Pushes its name onto `mod_stack`
+/// for the duration of the recursion so nested test fns get the full
+/// enclosing-mod chain in their `test_id`.
+fn handle_mod_item(node: Node, src: &[u8], defs: &mut Vec<ExtractedDef>, mod_stack: &mut Vec<String>) {
     let Some(body) = node.child_by_field_name("body") else { return };
-    walk_items(body, src, defs);
+    let Some(name_node) = node.child_by_field_name("name") else { return };
+    let Ok(name) = name_node.utf8_text(src) else { return };
+
+    mod_stack.push(name.to_string());
+    walk_items(body, src, defs, mod_stack);
+    mod_stack.pop();
 }
 
 /// Strip generic parameters from a type's text, e.g. `Calc<T>` -> `Calc`.
@@ -121,6 +175,18 @@ fn push_def(span: Node, name: String, kind: DefKind, defs: &mut Vec<ExtractedDef
         start_line: span.start_position().row as u32 + 1,
         end_line: span.end_position().row as u32 + 1,
         test_id: None,
+        computed_name: false,
+        parent: None,
+    });
+}
+
+fn push_test_def(span: Node, name: String, test_id: Vec<String>, defs: &mut Vec<ExtractedDef>) {
+    defs.push(ExtractedDef {
+        name,
+        kind: DefKind::TestCase,
+        start_line: span.start_position().row as u32 + 1,
+        end_line: span.end_position().row as u32 + 1,
+        test_id: Some(test_id),
         computed_name: false,
         parent: None,
     });
