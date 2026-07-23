@@ -7,7 +7,13 @@
 //! - `Calls{from, to: Resolved(D)}` -> `from` is impacted (D's caller).
 //! - `Reads{from, to: D}` -> `from` is impacted (D's reader).
 //! - `Contains{parent, child: D}` -> `parent` is impacted (D's container:
-//!   the parent's behavior embeds D, e.g. a class containing a method).
+//!   the parent's behavior embeds D, e.g. a class containing a method) —
+//!   *unless* `parent` is a `ModuleInit`: the indexer wires every parentless
+//!   def (an ordinary top-level function, not just genuinely nested ones)
+//!   to its file's `ModuleInit` as a bookkeeping fallback, and that edge
+//!   doesn't represent real behavioral embedding, so it's excluded here to
+//!   avoid spuriously widening every top-level def change to the whole
+//!   file's (and its transitive importers') tests.
 //! - `Calls{from, to: Unknown(name)}` where `name == short_name(D)` ->
 //!   `from` is impacted (an unresolved call that could dynamically dispatch
 //!   to D).
@@ -69,7 +75,24 @@ pub fn impacted_tests(graph: &Graph, seeds: &[Seed]) -> Vec<DefId> {
             }
         }
         if let Some(&parent) = index.containers.get(&d) {
-            enqueue(&mut queue, &mut visited, parent);
+            // `indexer::index_repo_incremental` wires every parentless def
+            // (an ordinary top-level function, not just genuinely nested
+            // ones) to its file's `ModuleInit` via `Contains`, purely as
+            // bookkeeping — there is no class/struct whose behavior
+            // "embeds" a plain top-level function merely because they share
+            // a file. Reverse-propagating through THAT edge would make the
+            // `ModuleInit` widening below (importer-closure + all of the
+            // file's tests) fire for literally any top-level def change,
+            // defeating precise selection for the common case. Only widen
+            // through a `Contains` edge when the parent is genuine
+            // behavioral containment (e.g. a class containing a method); a
+            // real module-init change still widens correctly below, via
+            // its own `SeedKind::ModuleInit` seed or via the importer-
+            // closure loop enqueuing `ModuleInit`s directly (never through
+            // this `containers` edge).
+            if graph.def(parent).kind != DefKind::ModuleInit {
+                enqueue(&mut queue, &mut visited, parent);
+            }
         }
         if let Some(unknown_callers) = index.unknown_by_name.get(short_name(&def.name)) {
             for &c in unknown_callers {
@@ -332,6 +355,57 @@ mod tests {
 
         let result = impacted_tests(&g, &[seed(method_m)]);
         assert_eq!(result, vec![t5]);
+    }
+
+    /// Regression: `index_repo_incremental` wires every parentless def (an
+    /// ordinary top-level function, not just genuinely nested ones) to its
+    /// file's `ModuleInit` via `Contains`, purely as bookkeeping — that
+    /// edge must NOT reverse-propagate into the `ModuleInit` importer-
+    /// closure widening, or every top-level def change would sweep in
+    /// every test in its file (and every transitively importing file)
+    /// regardless of whether it actually calls/reads the changed def.
+    /// Here `fn_add` and `fn_other` are unrelated siblings in the same
+    /// file, each only its own file's `Contains`-child of `ModuleInit`
+    /// (mirroring real indexer output, NOT a genuine module-init change);
+    /// seeding `fn_add` must select only `test_add` (a real caller), never
+    /// `test_other` (which calls the unrelated sibling).
+    #[test]
+    fn module_init_container_does_not_widen_unrelated_top_level_def() {
+        let mut g = g();
+        let f = file(&mut g, "a.ts");
+        let m_a = def(&mut g, "<module>", DefKind::ModuleInit, f);
+        let fn_add = def(&mut g, "add", DefKind::Function, f);
+        let fn_other = def(&mut g, "other", DefKind::Function, f);
+        let test_add = def(&mut g, "test_add", DefKind::TestCase, f);
+        let test_other = def(&mut g, "test_other", DefKind::TestCase, f);
+
+        g.add_edge(Edge::Contains {
+            parent: m_a,
+            child: fn_add,
+        });
+        g.add_edge(Edge::Contains {
+            parent: m_a,
+            child: fn_other,
+        });
+        g.add_edge(Edge::Contains {
+            parent: m_a,
+            child: test_add,
+        });
+        g.add_edge(Edge::Contains {
+            parent: m_a,
+            child: test_other,
+        });
+        g.add_edge(Edge::Calls {
+            from: test_add,
+            to: CallTarget::Resolved(fn_add),
+        });
+        g.add_edge(Edge::Calls {
+            from: test_other,
+            to: CallTarget::Resolved(fn_other),
+        });
+
+        let result = impacted_tests(&g, &[seed(fn_add)]);
+        assert_eq!(result, vec![test_add]);
     }
 
     #[test]
