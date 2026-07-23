@@ -31,27 +31,52 @@ impl Language for TsLanguage {
         // Always-present module-level def, spanning the whole file. Its
         // sig_hash covers only the "loose" top-level code: statements that
         // aren't themselves consumed as defs/imports by `walk_top_level`
-        // below. Only `function_declaration`/`class_declaration` (which get
-        // their own def hash) and `import_statement` are skipped —
-        // `lexical_declaration` and `export_statement` are deliberately kept
-        // IN the module hash, matching lang-go and lang-rust: a top-level
-        // `export const CONFIG = makeConfig(1)` (or any other non-function
-        // const/let value) is never captured as its own def — only
-        // arrow/function-valued declarators become `Function` defs — so if
-        // its enclosing statement were skipped here too, a value edit would
-        // be hashed nowhere and produce zero seeds. Accepted side effect:
-        // since a top-level `function_declaration`/`class_declaration` is
-        // only skipped when it's a *direct* top-level child, an *exported*
-        // one is wrapped in `export_statement` and so is no longer skipped
-        // either — an edit to `export function f() {}`'s body now also
-        // dirties `<module>` in addition to `f`'s own body hash. That's a
-        // pure widening (over-approximation only adds seeds, never hides a
-        // real change), so it's fine.
-        let module_init_skip = |n: &tree_sitter::Node| {
-            matches!(
-                n.kind(),
-                "function_declaration" | "class_declaration" | "import_statement"
-            )
+        // below. Content-aware (unlike lang-go/lang-rust's plain node-kind
+        // match) because TS wraps every exported declaration in one
+        // `export_statement` node, so a kind-only skip can't tell "exports a
+        // def" from "exports loose code" the way a bare top-level
+        // `function_declaration` vs `lexical_declaration` can:
+        //   - bare `function_declaration`/`class_declaration` -> skip (own
+        //     def hash covers it); bare `import_statement` -> skip.
+        //   - `export_statement` -> look at its `declaration` field child:
+        //     - wraps a `function_declaration`/`class_declaration` -> skip
+        //       (same reasoning as the bare case; keeps exported-def body
+        //       edits from spuriously dirtying `<module>`).
+        //     - wraps a `lexical_declaration` -> defer to the lexical rule
+        //       below on that child.
+        //     - no `declaration` child at all (`export default <expr>`,
+        //       `export * from "..."`, `export { x }`, `export { x } from
+        //       "..."`, and — a tree-sitter-typescript quirk — an
+        //       *anonymous* `export default function () {}`/`class {}`) ->
+        //       don't skip: this is either loose code or a re-export, and
+        //       either way nothing else hashes it.
+        //   - `lexical_declaration` (bare, or reached via the export case
+        //     above) -> skip iff EVERY declarator's value is an
+        //     arrow/function expression (i.e. every declarator already
+        //     became its own `Function` def via `walk_top_level` below).
+        //     `export const CONFIG = makeConfig(1)` has a non-function value
+        //     -> never skipped, so a value edit (invisible before this fix)
+        //     now dirties `<module>`. A single-declarator arrow/function
+        //     const IS skipped, keeping its body edits precise (covered only
+        //     by its own def's hash, same as a bare function declaration). A
+        //     mixed statement (`const a = 1, b = () => {}`) is NOT skipped —
+        //     accepted widening, since `b`'s own def hash already covers its
+        //     body precisely and the extra `<module>` dirtying only adds a
+        //     seed, never hides one.
+        let module_init_skip = |n: &tree_sitter::Node| -> bool {
+            match n.kind() {
+                "function_declaration" | "class_declaration" | "import_statement" => true,
+                "export_statement" => match n.child_by_field_name("declaration") {
+                    Some(decl) => match decl.kind() {
+                        "function_declaration" | "class_declaration" => true,
+                        "lexical_declaration" => lexical_all_fn_valued(decl),
+                        _ => false,
+                    },
+                    None => false,
+                },
+                "lexical_declaration" => lexical_all_fn_valued(*n),
+                _ => false,
+            }
         };
         defs.push(ExtractedDef {
             name: "<module>".to_string(),
@@ -153,6 +178,33 @@ impl Language for TsLanguage {
 
         candidates.into_iter().find(|c| repo_root.join(c).exists())
     }
+}
+
+/// Whether every `variable_declarator` in a `lexical_declaration` (`const`/
+/// `let`) has an arrow-function or function-expression value — i.e. every
+/// declarator is already captured as its own `Function` def by
+/// `walk_top_level`'s `lexical_declaration` handling, so the whole statement
+/// is safe to exclude from the module-init hash without hiding a change.
+/// `false` for a statement with zero declarators (shouldn't occur, but never
+/// worth skipping something that could hide a real edit) or any non-function
+/// value (`export const CONFIG = makeConfig(1)`, a mixed `const a = 1, b =
+/// () => {}`, etc).
+fn lexical_all_fn_valued(node: Node) -> bool {
+    let mut cursor = node.walk();
+    let mut saw_declarator = false;
+    for child in node.children(&mut cursor) {
+        if child.kind() != "variable_declarator" {
+            continue;
+        }
+        saw_declarator = true;
+        let is_fn_valued = child
+            .child_by_field_name("value")
+            .is_some_and(|v| matches!(v.kind(), "arrow_function" | "function_expression"));
+        if !is_fn_valued {
+            return false;
+        }
+    }
+    saw_declarator
 }
 
 /// Lexically collapse `.` and `..` components (no filesystem access), so

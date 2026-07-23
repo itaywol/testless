@@ -100,12 +100,12 @@ const MATH_ADD_ORIGINAL: &str =
     "export function add(a: number, b: number): number { return a + b; }\n";
 
 /// (a) A pure body edit of `add` (same signature, different implementation)
-/// must seed `add`'s def with `SeedKind::Body`. It also now seeds `<module>`
-/// with `SeedKind::ModuleInit`: since Item 1 (lang-ts module-scope
-/// visibility), `export_statement` is no longer excluded from the module-init
-/// hash, so an edit to an exported function's body — wrapped in
-/// `export_statement` — dirties `<module>` too. That's the accepted widening
-/// documented on `TsLanguage::extract`'s `module_init_skip`.
+/// must seed exactly `add`'s def with `SeedKind::Body` — nothing else.
+/// `export function add() {}` is wrapped in `export_statement`, but
+/// `module_init_skip` looks at the `declaration` field child and still skips
+/// it (a def-shaped export), so `<module>` stays clean — precise
+/// function-level selection is preserved even for exported defs (the
+/// content-aware refinement of Item 1's `module_init_skip`).
 #[test]
 fn body_edit_seeds_exactly_that_defs_body() {
     let tmp = tempfile::tempdir().unwrap();
@@ -119,14 +119,6 @@ fn body_edit_seeds_exactly_that_defs_body() {
     let registry = registry();
     let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
     let add = find_def(&graph, "add");
-    let file_id = testless_core::FileId(
-        graph
-            .files
-            .iter()
-            .position(|f| f.path.ends_with("math.ts"))
-            .unwrap() as u32,
-    );
-    let module_init = graph.module_init(file_id).expect("module_init present");
 
     let changed = vec![ChangedFile {
         path: PathBuf::from("src/math.ts"),
@@ -141,21 +133,61 @@ fn body_edit_seeds_exactly_that_defs_body() {
     };
 
     let mode = classify(root, &graph, &registry, &changed, &extractions, &old_src_of);
+    assert_eq!(
+        mode,
+        ChangeMode::Selection(vec![Seed {
+            def: add,
+            kind: SeedKind::Body,
+        }])
+    );
+}
+
+/// Content-aware `module_init_skip` refinement: an exported arrow-const's
+/// body edit (`export const mul = (a, b) => a * b` -> `a + b`) seeds only
+/// `mul`'s own def change (`SigChanged`, per the existing accepted
+/// limitation that an arrow/function-expression const's span has no `body`
+/// field of its own — see `push_def`'s doc comment) and must NOT also seed
+/// `<module>`: the whole `lexical_declaration` has a single, arrow-valued
+/// declarator, so `lexical_all_fn_valued` skips it from the module hash.
+#[test]
+fn exported_arrow_const_body_edit_does_not_seed_module_init() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write(
+        root,
+        "src/math.ts",
+        "export const mul = (a: number, b: number): number => a + b;\n",
+    );
+
+    let registry = registry();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let mul = find_def(&graph, "mul");
+
+    let changed = vec![ChangedFile {
+        path: PathBuf::from("src/math.ts"),
+        status: FileStatus::Modified,
+    }];
+    let old_src_of = |p: &Path| -> anyhow::Result<Option<String>> {
+        if p == Path::new("src/math.ts") {
+            Ok(Some(
+                "export const mul = (a: number, b: number): number => a * b;\n".to_string(),
+            ))
+        } else {
+            Ok(None)
+        }
+    };
+
+    let mode = classify(root, &graph, &registry, &changed, &extractions, &old_src_of);
     match mode {
-        ChangeMode::Selection(mut seeds) => {
-            seeds.sort_by_key(|s| s.def);
-            let mut expected = vec![
-                Seed {
-                    def: add,
-                    kind: SeedKind::Body,
-                },
-                Seed {
-                    def: module_init,
-                    kind: SeedKind::ModuleInit,
-                },
-            ];
-            expected.sort_by_key(|s| s.def);
-            assert_eq!(seeds, expected);
+        ChangeMode::Selection(seeds) => {
+            assert!(
+                seeds.iter().any(|s| s.def == mul),
+                "expected a seed for mul's own def, got {seeds:?}"
+            );
+            assert!(
+                !seeds.iter().any(|s| s.kind == SeedKind::ModuleInit),
+                "expected no ModuleInit seed, got {seeds:?}"
+            );
         }
         other => panic!("expected Selection, got {other:?}"),
     }
