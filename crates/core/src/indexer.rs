@@ -125,7 +125,9 @@ pub fn index_repo_incremental(
     // (e.g. a type-only import alongside a value import of the same
     // module) down to a single `Imports` edge.
     let mut seen: HashSet<(NodeId, NodeId)> = HashSet::new();
-    for (file_id, ((rel_path, lang), extraction)) in files.iter().zip(extractions.iter()).enumerate() {
+    for (file_id, ((rel_path, lang), extraction)) in
+        files.iter().zip(extractions.iter()).enumerate()
+    {
         let file_id = file_id as NodeId;
         for import in &extraction.imports {
             let Some(resolved) = lang.resolve_import(rel_path, &import.raw, root) else {

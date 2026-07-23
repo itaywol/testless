@@ -75,7 +75,9 @@ fn resolve_mod_decl(from_file: &Path, mod_name: &str, repo_root: &Path) -> Optio
 
     let file_candidate = dir.join(format!("{mod_name}.rs"));
     let mod_candidate = dir.join(mod_name).join("mod.rs");
-    [file_candidate, mod_candidate].into_iter().find(|c| repo_root.join(c).exists())
+    [file_candidate, mod_candidate]
+        .into_iter()
+        .find(|c| repo_root.join(c).exists())
 }
 
 /// `use <path>` resolution. Only `crate::`/`super::`/`self::`-rooted paths
@@ -102,7 +104,10 @@ fn resolve_use_path(from_file: &Path, path_text: &str, repo_root: &Path) -> Opti
         // best-effort, and only ever widens (never wrongly narrows) impact
         // since an unresolved import falls back to the ModuleInit
         // over-approximation.
-        "super" | "self" => from_file.parent().unwrap_or_else(|| Path::new("")).to_path_buf(),
+        "super" | "self" => from_file
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .to_path_buf(),
         _ => return None,
     };
 
@@ -115,7 +120,9 @@ fn resolve_use_path(from_file: &Path, path_text: &str, repo_root: &Path) -> Opti
 fn find_crate_root(from_file: &Path, repo_root: &Path) -> Option<PathBuf> {
     let mut dir = from_file.parent().unwrap_or_else(|| Path::new(""));
     loop {
-        if repo_root.join(dir).join("lib.rs").exists() || repo_root.join(dir).join("main.rs").exists() {
+        if repo_root.join(dir).join("lib.rs").exists()
+            || repo_root.join(dir).join("main.rs").exists()
+        {
             return Some(dir.to_path_buf());
         }
         match dir.parent() {
@@ -140,8 +147,9 @@ fn resolve_segments(root: &Path, segments: &[&str], repo_root: &Path) -> Option<
         file_candidate.push(".rs");
         let file_candidate = PathBuf::from(file_candidate);
         let mod_candidate = base.join("mod.rs");
-        if let Some(found) =
-            [file_candidate, mod_candidate].into_iter().find(|c| repo_root.join(c).exists())
+        if let Some(found) = [file_candidate, mod_candidate]
+            .into_iter()
+            .find(|c| repo_root.join(c).exists())
         {
             return Some(found);
         }
@@ -204,8 +212,12 @@ fn handle_function_item(
     mod_stack: &[String],
     attrs: &[Node],
 ) {
-    let Some(name_node) = node.child_by_field_name("name") else { return };
-    let Ok(name) = name_node.utf8_text(src) else { return };
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return;
+    };
+    let Ok(name) = name_node.utf8_text(src) else {
+        return;
+    };
 
     if attrs.iter().any(|attr| is_test_attribute(*attr, src)) {
         let mut test_id = mod_stack.to_vec();
@@ -221,17 +233,27 @@ fn handle_function_item(
 /// `#[tokio::test]`, `#[bench]`), or the whole path is exactly `rstest`
 /// (whose own last segment is `rstest`, not `test`).
 fn is_test_attribute(attr_item: Node, src: &[u8]) -> bool {
-    let Some(attribute) = attr_item.named_child(0) else { return false };
-    let Some(path_node) = attribute.named_child(0) else { return false };
-    let Ok(path) = path_node.utf8_text(src) else { return false };
+    let Some(attribute) = attr_item.named_child(0) else {
+        return false;
+    };
+    let Some(path_node) = attribute.named_child(0) else {
+        return false;
+    };
+    let Ok(path) = path_node.utf8_text(src) else {
+        return false;
+    };
     path == "rstest" || matches!(path.rsplit("::").next(), Some("test") | Some("bench"))
 }
 
 /// `struct_item` / `enum_item` / `trait_item` -> Class, named by the `name`
 /// field.
 fn handle_type_item(node: Node, src: &[u8], defs: &mut Vec<ExtractedDef>) {
-    let Some(name_node) = node.child_by_field_name("name") else { return };
-    let Ok(name) = name_node.utf8_text(src) else { return };
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return;
+    };
+    let Ok(name) = name_node.utf8_text(src) else {
+        return;
+    };
     push_def(node, name.to_string(), DefKind::Class, defs);
 }
 
@@ -239,16 +261,26 @@ fn handle_type_item(node: Node, src: &[u8], defs: &mut Vec<ExtractedDef>) {
 /// a Method named `Type.method`, where `Type` is the impl's `type` field
 /// text with any generic args (`<...>`) stripped.
 fn handle_impl_item(node: Node, src: &[u8], defs: &mut Vec<ExtractedDef>) {
-    let Some(type_node) = node.child_by_field_name("type") else { return };
-    let Ok(type_text) = type_node.utf8_text(src) else { return };
+    let Some(type_node) = node.child_by_field_name("type") else {
+        return;
+    };
+    let Ok(type_text) = type_node.utf8_text(src) else {
+        return;
+    };
     let type_name = strip_generics(type_text);
 
-    let Some(body) = node.child_by_field_name("body") else { return };
+    let Some(body) = node.child_by_field_name("body") else {
+        return;
+    };
     let mut cursor = body.walk();
     for child in body.children(&mut cursor) {
         if child.kind() == "function_item" {
-            let Some(name_node) = child.child_by_field_name("name") else { continue };
-            let Ok(method_name) = name_node.utf8_text(src) else { continue };
+            let Some(name_node) = child.child_by_field_name("name") else {
+                continue;
+            };
+            let Ok(method_name) = name_node.utf8_text(src) else {
+                continue;
+            };
             let full_name = format!("{type_name}.{method_name}");
             push_def(child, full_name, DefKind::Method, defs);
         }
@@ -268,8 +300,12 @@ fn handle_mod_item(
     mod_stack: &mut Vec<String>,
     imports: &mut Vec<ImportRef>,
 ) {
-    let Some(name_node) = node.child_by_field_name("name") else { return };
-    let Ok(name) = name_node.utf8_text(src) else { return };
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return;
+    };
+    let Ok(name) = name_node.utf8_text(src) else {
+        return;
+    };
 
     let Some(body) = node.child_by_field_name("body") else {
         imports.push(ImportRef {
@@ -290,9 +326,14 @@ fn handle_mod_item(
 /// use gets a single ImportRef for the whole group; `resolve_use_path`
 /// treats that as best-effort (longest resolvable prefix before the `{`).
 fn handle_use_declaration(node: Node, src: &[u8], imports: &mut Vec<ImportRef>) {
-    let Some(arg) = node.child_by_field_name("argument") else { return };
+    let Some(arg) = node.child_by_field_name("argument") else {
+        return;
+    };
     let Ok(text) = arg.utf8_text(src) else { return };
-    imports.push(ImportRef { raw: format!("use {text}"), line: node.start_position().row as u32 + 1 });
+    imports.push(ImportRef {
+        raw: format!("use {text}"),
+        line: node.start_position().row as u32 + 1,
+    });
 }
 
 /// Strip generic parameters from a type's text, e.g. `Calc<T>` -> `Calc`.

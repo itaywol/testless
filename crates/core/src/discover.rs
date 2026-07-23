@@ -33,7 +33,10 @@ pub fn discover<'r>(root: &Path, registry: &'r Registry) -> Vec<(PathBuf, &'r dy
         }
         let path = entry.path();
         if let Some(lang) = registry.for_path(path) {
-            let rel = path.strip_prefix(root).expect("entry under root").to_path_buf();
+            let rel = path
+                .strip_prefix(root)
+                .expect("entry under root")
+                .to_path_buf();
             out.push((rel, lang));
         }
     }

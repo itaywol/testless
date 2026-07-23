@@ -119,7 +119,10 @@ fn collect_imports(node: Node, src: &[u8], imports: &mut Vec<ImportRef>) {
     if matches!(node.kind(), "import_statement" | "export_statement") {
         if let Some(source) = node.child_by_field_name("source") {
             if let Some(raw) = string_literal_text(source, src) {
-                imports.push(ImportRef { raw, line: node.start_position().row as u32 + 1 });
+                imports.push(ImportRef {
+                    raw,
+                    line: node.start_position().row as u32 + 1,
+                });
             }
         }
     }
@@ -176,12 +179,20 @@ fn callee_kind(callee: Node, src: &[u8]) -> Option<TestCallKind> {
 fn match_test_call(node: Node, src: &[u8]) -> Option<TestCallMatch> {
     let func = node.child_by_field_name("function")?;
     if let Some(kind) = callee_kind(func, src) {
-        return Some(TestCallMatch { kind, skip_child_id: None, curried: false });
+        return Some(TestCallMatch {
+            kind,
+            skip_child_id: None,
+            curried: false,
+        });
     }
     if func.kind() == "call_expression" {
         let inner_func = func.child_by_field_name("function")?;
         let kind = callee_kind(inner_func, src)?;
-        return Some(TestCallMatch { kind, skip_child_id: Some(func.id()), curried: true });
+        return Some(TestCallMatch {
+            kind,
+            skip_child_id: Some(func.id()),
+            curried: true,
+        });
     }
     None
 }
@@ -190,7 +201,9 @@ fn match_test_call(node: Node, src: &[u8]) -> Option<TestCallMatch> {
 /// string content, or `("<computed>", true)` for template literals / any
 /// non-string-literal first argument.
 fn first_arg_segment(node: Node, src: &[u8]) -> (String, bool) {
-    let arg = node.child_by_field_name("arguments").and_then(|a| a.named_child(0));
+    let arg = node
+        .child_by_field_name("arguments")
+        .and_then(|a| a.named_child(0));
     match arg {
         Some(n) if n.kind() == "string" => (string_literal_text(n, src).unwrap_or_default(), false),
         _ => ("<computed>".to_string(), true),
@@ -202,7 +215,12 @@ fn first_arg_segment(node: Node, src: &[u8]) -> (String, bool) {
 /// the chain is computed (template literal / non-literal first arg),
 /// `computed_name` is set and the chain is truncated right after the last
 /// literal segment (i.e. it stops at the first computed segment).
-fn walk_tests(node: Node, src: &[u8], defs: &mut Vec<ExtractedDef>, stack: &mut Vec<(String, bool)>) {
+fn walk_tests(
+    node: Node,
+    src: &[u8],
+    defs: &mut Vec<ExtractedDef>,
+    stack: &mut Vec<(String, bool)>,
+) {
     if node.kind() == "call_expression" {
         if let Some(m) = match_test_call(node, src) {
             let seg = if m.curried {
@@ -287,7 +305,9 @@ fn walk_top_level(node: Node, src: &[u8], defs: &mut Vec<ExtractedDef>, parent: 
                 if declarator.kind() != "variable_declarator" {
                     continue;
                 }
-                let Some(value) = declarator.child_by_field_name("value") else { continue };
+                let Some(value) = declarator.child_by_field_name("value") else {
+                    continue;
+                };
                 if !matches!(value.kind(), "arrow_function" | "function_expression") {
                     continue;
                 }

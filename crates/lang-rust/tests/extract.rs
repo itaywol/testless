@@ -1,11 +1,13 @@
+use std::path::Path;
 use testless_core::{DefKind, Language};
 use testless_lang_rust::RustLanguage;
-use std::path::Path;
 
 fn extract(src: &str) -> testless_core::Extraction {
     let lang = RustLanguage;
     let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&lang.grammar(Path::new("x.rs"))).unwrap();
+    parser
+        .set_language(&lang.grammar(Path::new("x.rs")))
+        .unwrap();
     let tree = parser.parse(src, None).unwrap();
     lang.extract(src, &tree)
 }

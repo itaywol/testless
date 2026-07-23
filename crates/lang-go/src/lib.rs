@@ -61,7 +61,8 @@ impl Language for GoLanguage {
         // package) has no caller/fixture needing it here, so it's left
         // unhandled (falls through to `None`) rather than speculatively
         // guessed at.
-        raw.strip_prefix(&format!("{module_path}/")).map(PathBuf::from)
+        raw.strip_prefix(&format!("{module_path}/"))
+            .map(PathBuf::from)
     }
 }
 
@@ -80,8 +81,12 @@ impl Language for GoLanguage {
 /// rare, and treating it as a TestCase root when it isn't one is harmless
 /// (it just makes that def eligible for selection, never excluded).
 fn handle_function_declaration(node: Node, src: &[u8], defs: &mut Vec<ExtractedDef>) {
-    let Some(name_node) = node.child_by_field_name("name") else { return };
-    let Ok(name) = name_node.utf8_text(src) else { return };
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return;
+    };
+    let Ok(name) = name_node.utf8_text(src) else {
+        return;
+    };
 
     if name == "init" {
         // Contributes to ModuleInit; no separate def.
@@ -99,17 +104,38 @@ fn handle_function_declaration(node: Node, src: &[u8], defs: &mut Vec<ExtractedD
             false,
         );
         let mut used_synthetic = false;
-        walk_subtests(node, src, defs, root_idx, &[name.to_string()], &mut used_synthetic);
+        walk_subtests(
+            node,
+            src,
+            defs,
+            root_idx,
+            &[name.to_string()],
+            &mut used_synthetic,
+        );
         return;
     }
 
-    push_def(node, name.to_string(), DefKind::Function, defs, None, None, false);
+    push_def(
+        node,
+        name.to_string(),
+        DefKind::Function,
+        defs,
+        None,
+        None,
+        false,
+    );
 }
 
 fn handle_method_declaration(node: Node, src: &[u8], defs: &mut Vec<ExtractedDef>) {
-    let Some(name_node) = node.child_by_field_name("name") else { return };
-    let Ok(method_name) = name_node.utf8_text(src) else { return };
-    let Some(recv_type) = receiver_type_name(node, src) else { return };
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return;
+    };
+    let Ok(method_name) = name_node.utf8_text(src) else {
+        return;
+    };
+    let Some(recv_type) = receiver_type_name(node, src) else {
+        return;
+    };
 
     let full_name = format!("{recv_type}.{method_name}");
     push_def(node, full_name, DefKind::Method, defs, None, None, false);
@@ -120,7 +146,9 @@ fn handle_method_declaration(node: Node, src: &[u8], defs: &mut Vec<ExtractedDef
 fn receiver_type_name(method_decl: Node, src: &[u8]) -> Option<String> {
     let receiver = method_decl.child_by_field_name("receiver")?;
     let mut cursor = receiver.walk();
-    let param = receiver.children(&mut cursor).find(|c| c.kind() == "parameter_declaration")?;
+    let param = receiver
+        .children(&mut cursor)
+        .find(|c| c.kind() == "parameter_declaration")?;
     let ty = param.child_by_field_name("type")?;
     let type_ident = if ty.kind() == "pointer_type" {
         ty.named_child(0)?
@@ -143,23 +171,33 @@ fn is_test_function(name: &str, node: Node, src: &[u8]) -> bool {
         return false;
     }
 
-    let Some(params) = node.child_by_field_name("parameters") else { return false };
+    let Some(params) = node.child_by_field_name("parameters") else {
+        return false;
+    };
     let mut cursor = params.walk();
-    let param_decls: Vec<Node> =
-        params.children(&mut cursor).filter(|c| c.kind() == "parameter_declaration").collect();
+    let param_decls: Vec<Node> = params
+        .children(&mut cursor)
+        .filter(|c| c.kind() == "parameter_declaration")
+        .collect();
 
     match param_decls.len() {
         0 => prefix == "Example",
         1 => {
-            let Some(ty) = param_decls[0].child_by_field_name("type") else { return false };
+            let Some(ty) = param_decls[0].child_by_field_name("type") else {
+                return false;
+            };
             if ty.kind() != "pointer_type" {
                 return false;
             }
-            let Some(inner) = ty.named_child(0) else { return false };
+            let Some(inner) = ty.named_child(0) else {
+                return false;
+            };
             if inner.kind() != "qualified_type" {
                 return false;
             }
-            let Some(pkg) = inner.child_by_field_name("package") else { return false };
+            let Some(pkg) = inner.child_by_field_name("package") else {
+                return false;
+            };
             pkg.utf8_text(src).ok() == Some("testing")
         }
         _ => false,
@@ -187,12 +225,26 @@ fn walk_subtests(
     used_synthetic: &mut bool,
 ) {
     if is_run_call(node, src) {
-        handle_run_call(node, src, defs, enclosing_idx, enclosing_chain, used_synthetic);
+        handle_run_call(
+            node,
+            src,
+            defs,
+            enclosing_idx,
+            enclosing_chain,
+            used_synthetic,
+        );
         return;
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_subtests(child, src, defs, enclosing_idx, enclosing_chain, used_synthetic);
+        walk_subtests(
+            child,
+            src,
+            defs,
+            enclosing_idx,
+            enclosing_chain,
+            used_synthetic,
+        );
     }
 }
 
@@ -235,8 +287,15 @@ fn handle_run_call(
 
     let mut test_id = enclosing_chain.to_vec();
     test_id.push(segment.clone());
-    let idx =
-        push_def(call, segment, DefKind::TestCase, defs, Some(enclosing_idx), Some(test_id.clone()), computed);
+    let idx = push_def(
+        call,
+        segment,
+        DefKind::TestCase,
+        defs,
+        Some(enclosing_idx),
+        Some(test_id.clone()),
+        computed,
+    );
 
     // Recurse into the callback body (`func(t *testing.T) { ... }`, the
     // second argument) with this call as the new enclosing node, so any
@@ -244,7 +303,14 @@ fn handle_run_call(
     // outer root, and gets its own independent synthetic-dedupe scope.
     if let Some(callback) = args.and_then(|a| a.named_child(1)) {
         let mut nested_used_synthetic = false;
-        walk_subtests(callback, src, defs, idx, &test_id, &mut nested_used_synthetic);
+        walk_subtests(
+            callback,
+            src,
+            defs,
+            idx,
+            &test_id,
+            &mut nested_used_synthetic,
+        );
     }
 }
 
@@ -252,7 +318,10 @@ fn handle_run_call(
 /// `interpreted_string_literal_content` child holds the content; an empty
 /// string literal has no such child).
 fn interpreted_string_content(node: Node, src: &[u8]) -> String {
-    node.named_child(0).and_then(|c| c.utf8_text(src).ok()).unwrap_or("").to_string()
+    node.named_child(0)
+        .and_then(|c| c.utf8_text(src).ok())
+        .unwrap_or("")
+        .to_string()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -285,7 +354,10 @@ fn collect_imports(node: Node, src: &[u8], imports: &mut Vec<ImportRef>) {
         if let Some(path) = node.child_by_field_name("path") {
             if path.kind() == "interpreted_string_literal" {
                 let raw = interpreted_string_content(path, src);
-                imports.push(ImportRef { raw, line: node.start_position().row as u32 + 1 });
+                imports.push(ImportRef {
+                    raw,
+                    line: node.start_position().row as u32 + 1,
+                });
             }
         }
     }

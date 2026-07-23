@@ -5,10 +5,21 @@ pub type NodeId = u32;
 pub type FileId = u32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DefKind { Function, Method, Class, TestCase, ModuleInit }
+pub enum DefKind {
+    Function,
+    Method,
+    Class,
+    TestCase,
+    ModuleInit,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EdgeKind { Contains, Calls, Reads, Imports }
+pub enum EdgeKind {
+    Contains,
+    Calls,
+    Reads,
+    Imports,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Def {
@@ -22,7 +33,11 @@ pub struct Def {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileNode { pub path: PathBuf, pub hash: [u8; 32], pub lang: String }
+pub struct FileNode {
+    pub path: PathBuf,
+    pub hash: [u8; 32],
+    pub lang: String,
+}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Graph {
@@ -44,12 +59,16 @@ impl Graph {
         self.edges.push((from, kind, to));
     }
     pub fn defs_in_file(&self, f: FileId) -> impl Iterator<Item = (NodeId, &Def)> {
-        self.defs.iter().enumerate()
+        self.defs
+            .iter()
+            .enumerate()
             .filter(move |(_, d)| d.file == f)
             .map(|(i, d)| (i as NodeId, d))
     }
     pub fn module_init(&self, f: FileId) -> Option<NodeId> {
-        self.defs_in_file(f).find(|(_, d)| d.kind == DefKind::ModuleInit).map(|(i, _)| i)
+        self.defs_in_file(f)
+            .find(|(_, d)| d.kind == DefKind::ModuleInit)
+            .map(|(i, _)| i)
     }
 }
 
@@ -59,10 +78,22 @@ mod tests {
     use std::path::PathBuf;
 
     fn f(path: &str) -> FileNode {
-        FileNode { path: PathBuf::from(path), hash: [0; 32], lang: "ts".into() }
+        FileNode {
+            path: PathBuf::from(path),
+            hash: [0; 32],
+            lang: "ts".into(),
+        }
     }
     fn d(name: &str, kind: DefKind, file: FileId) -> Def {
-        Def { name: name.into(), kind, file, start_line: 1, end_line: 2, test_id: None, computed_name: false }
+        Def {
+            name: name.into(),
+            kind,
+            file,
+            start_line: 1,
+            end_line: 2,
+            test_id: None,
+            computed_name: false,
+        }
     }
 
     #[test]
@@ -76,7 +107,10 @@ mod tests {
         g.add_edge(init, EdgeKind::Contains, add);
 
         assert_eq!(g.defs_in_file(fa).count(), 2);
-        assert_eq!(g.defs_in_file(fb).map(|(id, _)| id).collect::<Vec<_>>(), vec![other]);
+        assert_eq!(
+            g.defs_in_file(fb).map(|(id, _)| id).collect::<Vec<_>>(),
+            vec![other]
+        );
         assert_eq!(g.module_init(fa), Some(init));
         assert_eq!(g.module_init(fb), None);
     }

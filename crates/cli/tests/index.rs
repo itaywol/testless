@@ -30,17 +30,36 @@ fn copy_dir(src: &std::path::Path, dst: &std::path::Path) {
 #[test]
 fn indexes_both_fixture_apps() {
     let g = index_repo(std::path::Path::new("../../fixtures/ts-app"), &registry()).unwrap();
-    assert!(g.defs.iter().any(|d| d.name == "add" && d.kind == DefKind::Function));
+    assert!(g
+        .defs
+        .iter()
+        .any(|d| d.name == "add" && d.kind == DefKind::Function));
     assert!(g.defs.iter().any(|d| d.kind == DefKind::TestCase));
     // format.ts imports math.ts
-    let format = g.files.iter().position(|f| f.path.ends_with("format.ts")).unwrap() as u32;
-    let math = g.files.iter().position(|f| f.path.ends_with("math.ts")).unwrap() as u32;
+    let format = g
+        .files
+        .iter()
+        .position(|f| f.path.ends_with("format.ts"))
+        .unwrap() as u32;
+    let math = g
+        .files
+        .iter()
+        .position(|f| f.path.ends_with("math.ts"))
+        .unwrap() as u32;
     assert!(g.edges.contains(&(format, EdgeKind::Imports, math)));
 
     let g = index_repo(std::path::Path::new("../../fixtures/go-app"), &registry()).unwrap();
     assert!(g.defs.iter().any(|d| d.name == "Calc.Push"));
-    let fmt2 = g.files.iter().position(|f| f.path.ends_with("fmt2.go")).unwrap() as u32;
-    let calc = g.files.iter().position(|f| f.path.ends_with("calc.go")).unwrap() as u32;
+    let fmt2 = g
+        .files
+        .iter()
+        .position(|f| f.path.ends_with("fmt2.go"))
+        .unwrap() as u32;
+    let calc = g
+        .files
+        .iter()
+        .position(|f| f.path.ends_with("calc.go"))
+        .unwrap() as u32;
     assert!(g.edges.contains(&(fmt2, EdgeKind::Imports, calc)));
 }
 
@@ -65,10 +84,21 @@ fn dedups_repeated_imports_of_the_same_target() {
     .unwrap();
 
     let g = index_repo(root, &registry()).unwrap();
-    let main = g.files.iter().position(|f| f.path.ends_with("main.ts")).unwrap() as u32;
-    let m = g.files.iter().position(|f| f.path.ends_with("m.ts")).unwrap() as u32;
-    let import_edges =
-        g.edges.iter().filter(|e| **e == (main, EdgeKind::Imports, m)).count();
+    let main = g
+        .files
+        .iter()
+        .position(|f| f.path.ends_with("main.ts"))
+        .unwrap() as u32;
+    let m = g
+        .files
+        .iter()
+        .position(|f| f.path.ends_with("m.ts"))
+        .unwrap() as u32;
+    let import_edges = g
+        .edges
+        .iter()
+        .filter(|e| **e == (main, EdgeKind::Imports, m))
+        .count();
     assert_eq!(import_edges, 1);
 }
 
@@ -99,9 +129,15 @@ fn incremental_reindex_reuses_unchanged_files_and_reparses_only_the_changed_one(
     assert_eq!(stats2.reused, files_count(&graph2) - 1);
 
     // New def from the appended function is present.
-    assert!(graph2.defs.iter().any(|d| d.name == "sub" && d.kind == DefKind::Function));
+    assert!(graph2
+        .defs
+        .iter()
+        .any(|d| d.name == "sub" && d.kind == DefKind::Function));
     // Defs from the unchanged math.ts function are still present.
-    assert!(graph2.defs.iter().any(|d| d.name == "add" && d.kind == DefKind::Function));
+    assert!(graph2
+        .defs
+        .iter()
+        .any(|d| d.name == "add" && d.kind == DefKind::Function));
     // Defs from an entirely untouched file (format.ts) are still present too.
     assert!(graph2.defs.iter().any(|d| d.kind == DefKind::TestCase));
 }
