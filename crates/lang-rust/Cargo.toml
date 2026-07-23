@@ -1,12 +1,12 @@
 [package]
 name = "testless-lang-rust"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 description = "Rust language plugin for testless"
 repository.workspace = true
 license.workspace = true
 
 [dependencies]
-testless-core = { path = "../core" }
+testless-core = { path = "../core", version = "0.1.0" }
 tree-sitter = "0.26.11"
 tree-sitter-rust = "0.24.2"

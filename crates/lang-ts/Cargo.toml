@@ -1,12 +1,12 @@
 [package]
 name = "testless-lang-ts"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 description = "TypeScript/JavaScript language plugin for testless"
 repository.workspace = true
 license.workspace = true
 
 [dependencies]
-testless-core = { path = "../core" }
+testless-core = { path = "../core", version = "0.1.0" }
 tree-sitter = "0.26.11"
 tree-sitter-typescript = "0.23.2"

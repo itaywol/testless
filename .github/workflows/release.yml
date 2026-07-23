@@ -22,14 +22,15 @@ jobs:
         run: cargo install cross --locked
       - name: Build
         run: |
-          if [ "${{ matrix.cross }}" = "true" ]; then cross build --release -p testless --target ${{ matrix.target }}
-          else cargo build --release -p testless --target ${{ matrix.target }}; fi
+          if [ "${{ matrix.cross }}" = "true" ]; then cross build --release --locked -p testless --target ${{ matrix.target }}
+          else cargo build --release --locked -p testless --target ${{ matrix.target }}; fi
       - name: Package
         run: tar czf testless-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release testless
       - uses: softprops/action-gh-release@v2
         with: { files: "testless-*.tar.gz" }
 
   publish:
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,6 +41,18 @@ jobs:
         run: |
           if [ -z "$CARGO_REGISTRY_TOKEN" ]; then echo "no token; skipping crates.io publish"; exit 0; fi
           for c in testless-core testless-lang-ts testless-lang-go testless-lang-rust testless; do
-            cargo publish -p "$c" --no-verify || true
+            set +e
+            out=$(cargo publish -p "$c" --no-verify 2>&1)
+            status=$?
+            set -e
+            echo "$out"
+            if [ $status -ne 0 ]; then
+              if echo "$out" | grep -qi "already uploaded\|already exists"; then
+                echo "$c already published; continuing"
+              else
+                echo "publish failed for $c" >&2
+                exit 1
+              fi
+            fi
             sleep 30
           done

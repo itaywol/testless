@@ -22,3 +22,11 @@ fn extracts_fns_methods_types_module_init() {
     assert!(names.contains(&("Calc", DefKind::Class)));
     assert!(names.contains(&("Calc.push", DefKind::Method)));
 }
+
+#[test]
+fn strips_generics_from_impl_type_name() {
+    let src = "struct Calc<T> { v: T }\nimpl<T> Calc<T> { fn get(&self) -> i64 { 0 } }";
+    let ex = extract(src);
+    let names: Vec<(&str, DefKind)> = ex.defs.iter().map(|d| (d.name.as_str(), d.kind)).collect();
+    assert!(names.contains(&("Calc.get", DefKind::Method)));
+}
