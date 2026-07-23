@@ -29,14 +29,17 @@ fn index_then_stats_json() {
         .current_dir(tmp.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("\"defs\"")); // piped => JSON
+        .stdout(
+            predicate::str::contains("\"defs\"") // piped => JSON
+                .and(predicate::str::contains("\"calls\"")),
+        );
     Command::cargo_bin("testless")
         .unwrap()
         .arg("stats")
         .current_dir(tmp.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("\"tests\""));
+        .stdout(predicate::str::contains("\"tests\"").and(predicate::str::contains("\"calls\"")));
 }
 
 #[test]

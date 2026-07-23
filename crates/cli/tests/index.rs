@@ -1,7 +1,17 @@
 use testless_core::{
     indexer::{index_repo, index_repo_incremental},
-    DefKind, EdgeKind, Registry,
+    CallTarget, DefId, DefKind, Edge, FileId, Graph, Registry,
 };
+
+/// First def whose `name` matches → its `DefId` (position in `g.defs`).
+fn find_def(g: &Graph, name: &str) -> DefId {
+    DefId(
+        g.defs
+            .iter()
+            .position(|d| d.name == name)
+            .unwrap_or_else(|| panic!("no def named {name:?}")) as u32,
+    )
+}
 
 fn registry() -> Registry {
     Registry::new(vec![
@@ -36,31 +46,41 @@ fn indexes_both_fixture_apps() {
         .any(|d| d.name == "add" && d.kind == DefKind::Function));
     assert!(g.defs.iter().any(|d| d.kind == DefKind::TestCase));
     // format.ts imports math.ts
-    let format = g
-        .files
-        .iter()
-        .position(|f| f.path.ends_with("format.ts"))
-        .unwrap() as u32;
-    let math = g
-        .files
-        .iter()
-        .position(|f| f.path.ends_with("math.ts"))
-        .unwrap() as u32;
-    assert!(g.edges.contains(&(format, EdgeKind::Imports, math)));
+    let format = FileId(
+        g.files
+            .iter()
+            .position(|f| f.path.ends_with("format.ts"))
+            .unwrap() as u32,
+    );
+    let math = FileId(
+        g.files
+            .iter()
+            .position(|f| f.path.ends_with("math.ts"))
+            .unwrap() as u32,
+    );
+    assert!(g.edges.contains(&Edge::Imports {
+        from: format,
+        to: math
+    }));
 
     let g = index_repo(std::path::Path::new("../../fixtures/go-app"), &registry()).unwrap();
     assert!(g.defs.iter().any(|d| d.name == "Calc.Push"));
-    let fmt2 = g
-        .files
-        .iter()
-        .position(|f| f.path.ends_with("fmt2.go"))
-        .unwrap() as u32;
-    let calc = g
-        .files
-        .iter()
-        .position(|f| f.path.ends_with("calc.go"))
-        .unwrap() as u32;
-    assert!(g.edges.contains(&(fmt2, EdgeKind::Imports, calc)));
+    let fmt2 = FileId(
+        g.files
+            .iter()
+            .position(|f| f.path.ends_with("fmt2.go"))
+            .unwrap() as u32,
+    );
+    let calc = FileId(
+        g.files
+            .iter()
+            .position(|f| f.path.ends_with("calc.go"))
+            .unwrap() as u32,
+    );
+    assert!(g.edges.contains(&Edge::Imports {
+        from: fmt2,
+        to: calc
+    }));
 }
 
 #[test]
@@ -84,20 +104,22 @@ fn dedups_repeated_imports_of_the_same_target() {
     .unwrap();
 
     let g = index_repo(root, &registry()).unwrap();
-    let main = g
-        .files
-        .iter()
-        .position(|f| f.path.ends_with("main.ts"))
-        .unwrap() as u32;
-    let m = g
-        .files
-        .iter()
-        .position(|f| f.path.ends_with("m.ts"))
-        .unwrap() as u32;
+    let main = FileId(
+        g.files
+            .iter()
+            .position(|f| f.path.ends_with("main.ts"))
+            .unwrap() as u32,
+    );
+    let m = FileId(
+        g.files
+            .iter()
+            .position(|f| f.path.ends_with("m.ts"))
+            .unwrap() as u32,
+    );
     let import_edges = g
         .edges
         .iter()
-        .filter(|e| **e == (main, EdgeKind::Imports, m))
+        .filter(|e| **e == Edge::Imports { from: main, to: m })
         .count();
     assert_eq!(import_edges, 1);
 }
@@ -140,4 +162,80 @@ fn incremental_reindex_reuses_unchanged_files_and_reparses_only_the_changed_one(
         .any(|d| d.name == "add" && d.kind == DefKind::Function));
     // Defs from an entirely untouched file (format.ts) are still present too.
     assert!(graph2.defs.iter().any(|d| d.kind == DefKind::TestCase));
+}
+
+#[test]
+fn resolves_cross_file_call_edges_ts() {
+    let g = index_repo(std::path::Path::new("../../fixtures/ts-app"), &registry()).unwrap();
+    let fmt = find_def(&g, "fmt");
+    let add = find_def(&g, "add");
+    assert!(g.edges.contains(&Edge::Calls {
+        from: fmt,
+        to: CallTarget::Resolved(add)
+    }));
+    // test → add edge too
+    let neg = g
+        .defs
+        .iter()
+        .position(|d| d.test_id.as_deref() == Some(&["add".into(), "handles negatives".into()][..]))
+        .map(|i| DefId(i as u32))
+        .unwrap();
+    assert!(g.edges.contains(&Edge::Calls {
+        from: neg,
+        to: CallTarget::Resolved(add)
+    }));
+}
+
+#[test]
+fn resolves_cross_package_go_and_cross_module_rust() {
+    let g = index_repo(std::path::Path::new("../../fixtures/go-app"), &registry()).unwrap();
+    let f = find_def(&g, "Fmt");
+    let add = find_def(&g, "Add");
+    assert!(g.edges.contains(&Edge::Calls {
+        from: f,
+        to: CallTarget::Resolved(add)
+    }));
+
+    let g = index_repo(std::path::Path::new("../../fixtures/rust-app"), &registry()).unwrap();
+    let f = find_def(&g, "fmt");
+    let add = find_def(&g, "add");
+    assert!(g.edges.contains(&Edge::Calls {
+        from: f,
+        to: CallTarget::Resolved(add)
+    }));
+}
+
+#[test]
+fn unresolved_calls_become_unknown_markers() {
+    // ts fixture: console.log(...) at top level → callee `log` qualifier `console` unresolvable
+    let g = index_repo(std::path::Path::new("../../fixtures/ts-app"), &registry()).unwrap();
+    assert!(g
+        .edges
+        .iter()
+        .any(|e| matches!(e, Edge::Calls { to: CallTarget::Unknown(n), .. } if n == "log")));
+}
+
+#[test]
+fn self_only_candidate_recursion_still_widens_to_unknown() {
+    // `solo` recursively calls itself and is the *only* def named `solo` in
+    // scope, so every raw candidate is filtered out by the self-edge guard.
+    // The ref must still yield ≥1 edge — it falls through to `Unknown`
+    // rather than silently vanishing, since a same-named symbol whose
+    // import failed to resolve would look identical and must not be
+    // dropped without a trace.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("src/solo.ts"),
+        "export function solo(n: number): number { return n <= 1 ? 1 : solo(n - 1); }\n",
+    )
+    .unwrap();
+
+    let g = index_repo(root, &registry()).unwrap();
+    let solo = find_def(&g, "solo");
+    assert!(g.edges.contains(&Edge::Calls {
+        from: solo,
+        to: CallTarget::Unknown("solo".to_string())
+    }));
 }

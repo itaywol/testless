@@ -15,7 +15,7 @@ pub type CachedExtraction = (PathBuf, [u8; 32], Extraction);
 /// prefix gives `load` something concrete to check: bump it whenever the
 /// cached types' shape changes, and old caches get rejected (and rebuilt)
 /// instead of misread.
-const CACHE_MAGIC: &[u8; 4] = b"TST1";
+const CACHE_MAGIC: &[u8; 4] = b"TST3";
 
 /// On-disk cache of a previous index run, rooted at `{repo}/.testless/`.
 ///

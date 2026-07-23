@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-pub type NodeId = u32;
-pub type FileId = u32;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct DefId(pub u32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct FileId(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DefKind {
@@ -13,12 +15,18 @@ pub enum DefKind {
     ModuleInit,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EdgeKind {
-    Contains,
-    Calls,
-    Reads,
-    Imports,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Edge {
+    Contains { parent: DefId, child: DefId },
+    Imports { from: FileId, to: FileId },
+    Calls { from: DefId, to: CallTarget },
+    Reads { from: DefId, to: DefId },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CallTarget {
+    Resolved(DefId),
+    Unknown(String), // name recorded for walk-time widening
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,32 +51,49 @@ pub struct FileNode {
 pub struct Graph {
     pub files: Vec<FileNode>,
     pub defs: Vec<Def>,
-    pub edges: Vec<(NodeId, EdgeKind, NodeId)>,
+    pub edges: Vec<Edge>,
+    /// `ModuleInit` def per file, indexed by `FileId` — built incrementally
+    /// in `add_def` so `module_init` is an O(1) lookup instead of an
+    /// O(defs) scan. Kept in sync with `add_file` (which appends `None` so
+    /// the vec stays aligned with `files`) and `add_def`.
+    module_inits: Vec<Option<DefId>>,
+    /// Defs belonging to each file, indexed by `FileId` — built
+    /// incrementally in `add_def` so `defs_in_file` is O(defs in that
+    /// file) instead of an O(all defs) scan.
+    file_defs: Vec<Vec<DefId>>,
 }
 
 impl Graph {
     pub fn add_file(&mut self, f: FileNode) -> FileId {
         self.files.push(f);
-        (self.files.len() - 1) as FileId
+        self.module_inits.push(None);
+        self.file_defs.push(Vec::new());
+        FileId((self.files.len() - 1) as u32)
     }
-    pub fn add_def(&mut self, d: Def) -> NodeId {
+    pub fn add_def(&mut self, d: Def) -> DefId {
+        let file = d.file;
+        let kind = d.kind;
         self.defs.push(d);
-        (self.defs.len() - 1) as NodeId
+        let id = DefId((self.defs.len() - 1) as u32);
+        self.file_defs[file.0 as usize].push(id);
+        if kind == DefKind::ModuleInit {
+            self.module_inits[file.0 as usize] = Some(id);
+        }
+        id
     }
-    pub fn add_edge(&mut self, from: NodeId, kind: EdgeKind, to: NodeId) {
-        self.edges.push((from, kind, to));
+    pub fn add_edge(&mut self, e: Edge) {
+        self.edges.push(e);
     }
-    pub fn defs_in_file(&self, f: FileId) -> impl Iterator<Item = (NodeId, &Def)> {
-        self.defs
+    pub fn def(&self, id: DefId) -> &Def {
+        &self.defs[id.0 as usize]
+    }
+    pub fn defs_in_file(&self, f: FileId) -> impl Iterator<Item = (DefId, &Def)> {
+        self.file_defs[f.0 as usize]
             .iter()
-            .enumerate()
-            .filter(move |(_, d)| d.file == f)
-            .map(|(i, d)| (i as NodeId, d))
+            .map(move |&id| (id, self.def(id)))
     }
-    pub fn module_init(&self, f: FileId) -> Option<NodeId> {
-        self.defs_in_file(f)
-            .find(|(_, d)| d.kind == DefKind::ModuleInit)
-            .map(|(i, _)| i)
+    pub fn module_init(&self, f: FileId) -> Option<DefId> {
+        self.module_inits[f.0 as usize]
     }
 }
 
@@ -104,7 +129,10 @@ mod tests {
         let init = g.add_def(d("<module>", DefKind::ModuleInit, fa));
         let add = g.add_def(d("add", DefKind::Function, fa));
         let other = g.add_def(d("x", DefKind::Function, fb));
-        g.add_edge(init, EdgeKind::Contains, add);
+        g.add_edge(Edge::Contains {
+            parent: init,
+            child: add,
+        });
 
         assert_eq!(g.defs_in_file(fa).count(), 2);
         assert_eq!(

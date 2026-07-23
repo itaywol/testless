@@ -6,7 +6,7 @@ use tree_sitter::Parser;
 
 use crate::cache::CachedExtraction;
 use crate::discover::discover;
-use crate::graph::{Def, EdgeKind, FileNode, Graph, NodeId};
+use crate::graph::{CallTarget, Def, DefId, Edge, FileId, FileNode, Graph};
 use crate::language::{Extraction, Language, Registry};
 
 /// Counts of work done by [`index_repo_incremental`]: how many files were
@@ -59,6 +59,10 @@ pub fn index_repo_incremental(
     // `files`/`graph.files` for pass 2 and for building the returned cache.
     let mut hashes: Vec<[u8; 32]> = Vec::with_capacity(files.len());
     let mut extractions: Vec<Extraction> = Vec::with_capacity(files.len());
+    // Per-file base offset into `graph.defs`, aligned by index with
+    // `files`/`extractions` — lets pass 3 map an `ExtractedRef.from_def`
+    // (an index into that file's own `Extraction.defs`) back to a `DefId`.
+    let mut file_def_base: Vec<usize> = Vec::with_capacity(files.len());
 
     for (rel_path, lang) in &files {
         let full_path = root.join(rel_path);
@@ -84,6 +88,7 @@ pub fn index_repo_incremental(
         });
 
         let base = graph.defs.len();
+        file_def_base.push(base);
         for def in &extraction.defs {
             graph.add_def(Def {
                 name: def.name.clone(),
@@ -101,15 +106,18 @@ pub fn index_repo_incremental(
             if def.kind == crate::graph::DefKind::ModuleInit {
                 continue;
             }
-            let node_id = (base + i) as NodeId;
+            let node_id = DefId((base + i) as u32);
             let parent_id = match def.parent {
-                Some(p) => (base + p) as NodeId,
+                Some(p) => DefId((base + p) as u32),
                 None => match module_init_id {
                     Some(m) => m,
                     None => continue,
                 },
             };
-            graph.add_edge(parent_id, EdgeKind::Contains, node_id);
+            graph.add_edge(Edge::Contains {
+                parent: parent_id,
+                child: node_id,
+            });
         }
 
         hashes.push(hash);
@@ -124,36 +132,146 @@ pub fn index_repo_incremental(
     // `seen` dedups repeated imports of the same target from the same file
     // (e.g. a type-only import alongside a value import of the same
     // module) down to a single `Imports` edge.
-    let mut seen: HashSet<(NodeId, NodeId)> = HashSet::new();
+    // Built once so exact-path and Go dir-fanout import resolution are O(1)
+    // hashmap lookups instead of an O(files) scan per import.
+    let path_to_file: HashMap<PathBuf, FileId> = graph
+        .files
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.path.clone(), FileId(i as u32)))
+        .collect();
+    let mut dir_to_files: HashMap<PathBuf, Vec<FileId>> = HashMap::new();
+    for (i, f) in graph.files.iter().enumerate() {
+        if let Some(parent) = f.path.parent() {
+            dir_to_files
+                .entry(parent.to_path_buf())
+                .or_default()
+                .push(FileId(i as u32));
+        }
+    }
+
+    let mut seen: HashSet<(FileId, FileId)> = HashSet::new();
     for (file_id, ((rel_path, lang), extraction)) in
         files.iter().zip(extractions.iter()).enumerate()
     {
-        let file_id = file_id as NodeId;
+        let file_id = FileId(file_id as u32);
         for import in &extraction.imports {
             let Some(resolved) = lang.resolve_import(rel_path, &import.raw, root) else {
                 continue;
             };
 
-            if let Some(target_id) = graph.files.iter().position(|f| f.path == resolved) {
-                let target_id = target_id as NodeId;
+            if let Some(&target_id) = path_to_file.get(&resolved) {
                 if target_id != file_id && seen.insert((file_id, target_id)) {
-                    graph.add_edge(file_id, EdgeKind::Imports, target_id);
+                    graph.add_edge(Edge::Imports {
+                        from: file_id,
+                        to: target_id,
+                    });
                 }
                 continue;
             }
 
-            let dir_targets: Vec<NodeId> = graph
-                .files
+            if let Some(targets) = dir_to_files.get(&resolved) {
+                for &target_id in targets {
+                    if target_id != file_id && seen.insert((file_id, target_id)) {
+                        graph.add_edge(Edge::Imports {
+                            from: file_id,
+                            to: target_id,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // Pass 3: resolve calls/reads to tier-1 candidates. Scope for a ref in
+    // file F is F itself plus every file F `Imports` (reusing `seen`, which
+    // pass 2 already built as exactly that from/to set). Defs are indexed
+    // under their *short* name — a method def like `Calc.push` is indexed
+    // under `push` too — so a bare-identifier ref matches both plain
+    // functions and qualified methods whether or not `ref.qualifier` is
+    // set (the receiver variable rarely equals the type name, so this is a
+    // deliberate over-approximation). `ModuleInit` defs (name `<module>`)
+    // are excluded from candidacy since nothing ever references them by
+    // name.
+    let mut imports_of: HashMap<FileId, Vec<FileId>> = HashMap::new();
+    for (from, to) in &seen {
+        imports_of.entry(*from).or_default().push(*to);
+    }
+
+    // Keyed by file first, then short name — lets `candidates_for` look up
+    // `by_short_name.get(f).and_then(|m| m.get(name))` with a borrowed
+    // `&str` instead of allocating a `String` per lookup per scope file.
+    let mut by_short_name: HashMap<FileId, HashMap<String, Vec<DefId>>> = HashMap::new();
+    for (i, def) in graph.defs.iter().enumerate() {
+        if def.kind == crate::graph::DefKind::ModuleInit {
+            continue;
+        }
+        let short = def.name.rsplit('.').next().unwrap_or(&def.name).to_string();
+        by_short_name
+            .entry(def.file)
+            .or_default()
+            .entry(short)
+            .or_default()
+            .push(DefId(i as u32));
+    }
+
+    let mut calls_seen: HashSet<(DefId, DefId)> = HashSet::new();
+    let mut reads_seen: HashSet<(DefId, DefId)> = HashSet::new();
+    let mut unknown_seen: HashSet<(DefId, String)> = HashSet::new();
+
+    for (file_idx, extraction) in extractions.iter().enumerate() {
+        let file_id = FileId(file_idx as u32);
+        let base = file_def_base[file_idx];
+
+        let mut scope: Vec<FileId> = vec![file_id];
+        if let Some(targets) = imports_of.get(&file_id) {
+            scope.extend(targets.iter().copied());
+        }
+        let candidates_for = |name: &str| -> Vec<DefId> {
+            scope
                 .iter()
-                .enumerate()
-                .filter(|(target_id, f)| {
-                    f.path.parent() == Some(resolved.as_path()) && *target_id as NodeId != file_id
-                })
-                .map(|(target_id, _)| target_id as NodeId)
-                .collect();
-            for target_id in dir_targets {
-                if seen.insert((file_id, target_id)) {
-                    graph.add_edge(file_id, EdgeKind::Imports, target_id);
+                .filter_map(|f| by_short_name.get(f).and_then(|m| m.get(name)))
+                .flatten()
+                .copied()
+                .collect()
+        };
+
+        for r in &extraction.calls {
+            let from = DefId((base + r.from_def) as u32);
+            // `emitted` tracks whether this ref produced at least one
+            // `Resolved` edge (new or already-deduped) — not just whether
+            // `candidates` was non-empty. A ref whose only candidates are
+            // all self-edges (e.g. recursion where the recursive callee is
+            // the sole same-named def in scope) must still widen to
+            // `Unknown` rather than silently vanishing: a real cross-file
+            // callee with the same name whose import failed to resolve
+            // would look identical, and dropping it without a trace would
+            // violate "every call ref yields >=1 edge".
+            let mut emitted = false;
+            for c in candidates_for(&r.name) {
+                if c != from {
+                    emitted = true;
+                    if calls_seen.insert((from, c)) {
+                        graph.add_edge(Edge::Calls {
+                            from,
+                            to: CallTarget::Resolved(c),
+                        });
+                    }
+                }
+            }
+            if !emitted && unknown_seen.insert((from, r.name.clone())) {
+                graph.add_edge(Edge::Calls {
+                    from,
+                    to: CallTarget::Unknown(r.name.clone()),
+                });
+            }
+        }
+
+        for r in &extraction.reads {
+            let from = DefId((base + r.from_def) as u32);
+            for c in candidates_for(&r.name) {
+                if c != from && reads_seen.insert((from, c)) {
+                    graph.add_edge(Edge::Reads { from, to: c });
                 }
             }
         }
