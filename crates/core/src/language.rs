@@ -20,6 +20,15 @@ pub struct ExtractedDef {
     pub computed_name: bool,
     /// index into the same Vec (contains nesting)
     pub parent: Option<usize>,
+    /// Structural fingerprint of the def's signature (everything but its
+    /// `body` field child) — see `fingerprint::split_fingerprint`. For
+    /// `ModuleInit`, this is instead the fingerprint over the file's loose
+    /// top-level code (`fingerprint::module_init_fingerprint`).
+    pub sig_hash: [u8; 32],
+    /// Structural fingerprint of the def's `body` field child alone, or
+    /// `None` when the def's node has no `body` field (e.g. `ModuleInit`, or
+    /// a `TestCase` whose node is a bodyless call expression).
+    pub body_hash: Option<[u8; 32]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

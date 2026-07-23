@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use testless_core::fingerprint::{module_init_fingerprint, split_fingerprint};
 use testless_core::{DefKind, ExtractedDef, ExtractedRef, Extraction, ImportRef, Language};
 use tree_sitter::Node;
 
@@ -27,6 +28,25 @@ impl Language for GoLanguage {
         // One ModuleInit `<module>` per file, always, spanning the whole
         // file (covers package-level vars and any `init()` functions, which
         // are folded into this rather than getting their own def).
+        //
+        // Note: the skip closure below marks every top-level
+        // `function_declaration` as "has its own def", per the language-wide
+        // convention (functions/methods/imports are hashed by their own def,
+        // package-level vars/consts are loose code that stays IN the module
+        // hash). `init()` is the one exception: it contributes no separate
+        // def (see `handle_function_declaration`), so its body is *not*
+        // otherwise covered by any def hash, yet this closure still skips it
+        // as a `function_declaration`. A change confined entirely to an
+        // `init()` body is therefore invisible to `diff_defs` — an accepted
+        // gap (rare in practice; `init()` bodies are typically small
+        // registration code) rather than special-casing the skip closure
+        // per-function-name.
+        let module_init_skip = |n: &tree_sitter::Node| {
+            matches!(
+                n.kind(),
+                "function_declaration" | "method_declaration" | "import_declaration"
+            )
+        };
         defs.push(ExtractedDef {
             name: "<module>".to_string(),
             kind: DefKind::ModuleInit,
@@ -35,6 +55,8 @@ impl Language for GoLanguage {
             test_id: None,
             computed_name: false,
             parent: None,
+            sig_hash: module_init_fingerprint(root, src_bytes, &module_init_skip),
+            body_hash: None,
         });
 
         // `scope_of` maps the AST node id that *is* a def's own span (a
@@ -151,6 +173,7 @@ fn handle_function_declaration(
             node,
             name.to_string(),
             DefKind::TestCase,
+            src,
             defs,
             None,
             Some(vec![name.to_string()]),
@@ -187,6 +210,7 @@ fn handle_function_declaration(
         node,
         name.to_string(),
         DefKind::Function,
+        src,
         defs,
         None,
         None,
@@ -213,7 +237,16 @@ fn handle_method_declaration(
     };
 
     let full_name = format!("{recv_type}.{method_name}");
-    let idx = push_def(node, full_name, DefKind::Method, defs, None, None, false);
+    let idx = push_def(
+        node,
+        full_name,
+        DefKind::Method,
+        src,
+        defs,
+        None,
+        None,
+        false,
+    );
     scope_of.insert(node.id(), idx);
 }
 
@@ -425,6 +458,7 @@ fn handle_run_call(
         call,
         segment,
         DefKind::TestCase,
+        src,
         defs,
         Some(enclosing_idx),
         Some(test_id.clone()),
@@ -472,11 +506,13 @@ fn push_def(
     span: Node,
     name: String,
     kind: DefKind,
+    src: &[u8],
     defs: &mut Vec<ExtractedDef>,
     parent: Option<usize>,
     test_id: Option<Vec<String>>,
     computed_name: bool,
 ) -> usize {
+    let (sig_hash, body_hash) = split_fingerprint(span, src);
     defs.push(ExtractedDef {
         name,
         kind,
@@ -485,6 +521,8 @@ fn push_def(
         test_id,
         computed_name,
         parent,
+        sig_hash,
+        body_hash,
     });
     defs.len() - 1
 }

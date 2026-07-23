@@ -1,8 +1,10 @@
 pub mod cache;
+pub mod diffdef;
 pub mod discover;
 pub mod fingerprint;
 pub mod graph;
 pub mod indexer;
 pub mod language;
+pub use diffdef::*;
 pub use graph::*;
 pub use language::*;

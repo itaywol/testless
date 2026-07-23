@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
+use testless_core::fingerprint::{module_init_fingerprint, split_fingerprint};
 use testless_core::{DefKind, ExtractedDef, ExtractedRef, Extraction, ImportRef, Language};
 use tree_sitter::Node;
 
@@ -24,9 +25,27 @@ impl Language for TsLanguage {
 
     fn extract(&self, src: &str, tree: &tree_sitter::Tree) -> Extraction {
         let root = tree.root_node();
+        let src_bytes = src.as_bytes();
         let mut defs = Vec::new();
 
-        // Always-present module-level def, spanning the whole file.
+        // Always-present module-level def, spanning the whole file. Its
+        // sig_hash covers only the "loose" top-level code: statements that
+        // aren't themselves consumed as defs/imports by `walk_top_level`
+        // below. `export_statement` is skipped wholesale — an exported def
+        // (`export function f() {}`) is already covered by its own def hash,
+        // and a bare `export { x }` re-export carries no executable code of
+        // its own, so over-approximating by skipping the whole statement
+        // never hides a real loose-code change.
+        let module_init_skip = |n: &tree_sitter::Node| {
+            matches!(
+                n.kind(),
+                "function_declaration"
+                    | "class_declaration"
+                    | "lexical_declaration"
+                    | "import_statement"
+                    | "export_statement"
+            )
+        };
         defs.push(ExtractedDef {
             name: "<module>".to_string(),
             kind: DefKind::ModuleInit,
@@ -35,6 +54,8 @@ impl Language for TsLanguage {
             test_id: None,
             computed_name: false,
             parent: None,
+            sig_hash: module_init_fingerprint(root, src_bytes, &module_init_skip),
+            body_hash: None,
         });
 
         // `scope_of` maps the AST node id that *is* a def's body/span (a
@@ -49,7 +70,6 @@ impl Language for TsLanguage {
         // add } from "./math"` doesn't itself count as a read of `add`).
         let mut def_name_ids: HashSet<usize> = HashSet::new();
 
-        let src_bytes = src.as_bytes();
         let mut cursor = root.walk();
         for child in root.children(&mut cursor) {
             walk_top_level(
@@ -519,6 +539,14 @@ fn walk_tests(
                         .take_while(|(_, computed)| !*computed)
                         .map(|(name, _)| name.clone())
                         .collect();
+                    // The node is the whole `it`/`test` call_expression, which
+                    // has no `body` field — split_fingerprint's sig_hash thus
+                    // covers the entire call (name + callback tokens) and
+                    // body_hash is always None. A change anywhere inside the
+                    // test (title or body) therefore surfaces as SigChanged,
+                    // never BodyChanged; that's fine here, either way the
+                    // test itself gets reseeded.
+                    let (sig_hash, body_hash) = split_fingerprint(node, src);
                     defs.push(ExtractedDef {
                         name: full.last().unwrap().0.clone(),
                         kind: DefKind::TestCase,
@@ -527,6 +555,8 @@ fn walk_tests(
                         test_id: Some(test_id),
                         computed_name,
                         parent: None,
+                        sig_hash,
+                        body_hash,
                     });
                     // The whole `it`/`test` call (including the curried outer
                     // span for `.each` forms) is this TestCase's enclosing
@@ -601,6 +631,15 @@ fn walk_top_level(
                     continue;
                 }
                 if let Some(name) = declarator.child_by_field_name("name") {
+                    // `push_def`'s span is `node` (the whole
+                    // `lexical_declaration`/`variable_declaration`
+                    // statement), which has no `body` field itself — so
+                    // sig_hash covers the entire statement (keyword, name,
+                    // arrow/function value, semicolon) and body_hash is
+                    // always None here. Same accepted limitation as
+                    // TestCase's call-expression node below: any change to
+                    // an arrow/function-expression const's body surfaces as
+                    // SigChanged rather than BodyChanged.
                     let idx = push_def(node, name, DefKind::Function, src, defs, parent);
                     // The def's enclosing scope for the refs pass is the
                     // function/arrow value itself (not the whole
@@ -644,6 +683,7 @@ fn push_def(
     parent: Option<usize>,
 ) -> usize {
     let name = name_node.utf8_text(src).unwrap_or_default().to_string();
+    let (sig_hash, body_hash) = split_fingerprint(span, src);
     defs.push(ExtractedDef {
         name,
         kind,
@@ -652,6 +692,8 @@ fn push_def(
         test_id: None,
         computed_name: false,
         parent,
+        sig_hash,
+        body_hash,
     });
     defs.len() - 1
 }
