@@ -1,6 +1,6 @@
 [package]
 name = "testless-core"
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 description = "testless graph core"
 repository.workspace = true

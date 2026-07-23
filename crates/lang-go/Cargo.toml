@@ -1,6 +1,6 @@
 [package]
 name = "testless-lang-go"
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 description = "Go language plugin for testless"
 repository.workspace = true

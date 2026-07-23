@@ -1,6 +1,6 @@
 [package]
 name = "testless-lang-ts"
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 description = "TypeScript/JavaScript language plugin for testless"
 repository.workspace = true

@@ -3,7 +3,6 @@ resolver = "2"
 members = ["crates/core", "crates/lang-ts", "crates/lang-go", "crates/lang-rust", "crates/cli"]
 
 [workspace.package]
-version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "Function-level test impact analysis via static AST"

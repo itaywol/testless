@@ -1,6 +1,6 @@
 [package]
 name = "testless-lang-rust"
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 description = "Rust language plugin for testless"
 repository.workspace = true
