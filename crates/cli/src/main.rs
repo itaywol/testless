@@ -225,14 +225,22 @@ fn cmd_changes(from: String, to: Option<String>) -> Result<i32> {
 
     let (graph, extractions, _stats) =
         index_repo_incremental(&cwd, &reg, prev).context("indexing repo")?;
-    cache.save(&graph, &extractions).context("saving cache")?;
 
+    // `changed_files`/`classify` run against the on-disk worktree before the
+    // cache is (re)written: saving first would leave a freshly-created (or
+    // freshly-modified) `.testless/graph.bin` sitting in the worktree, which
+    // `git ls-files --others` would then report as an untracked "changed"
+    // file in any repo that hasn't gitignored `.testless/` yet — polluting
+    // both the `changed_files` stat and (harmlessly, but wastefully) the
+    // importer scan.
     let changed =
         gitio::changed_files(&cwd, &from, None).context("listing files changed since --from")?;
 
     let mode = classify(&cwd, &graph, &reg, &changed, &extractions, &|p| {
         gitio::show_file(&cwd, &from, p)
     });
+
+    cache.save(&graph, &extractions).context("saving cache")?;
 
     let exit_code = match &mode {
         ChangeMode::Selection(_) => 0,
