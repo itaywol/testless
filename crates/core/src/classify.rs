@@ -195,19 +195,28 @@ fn classify_one(
     let changes = diff_defs(&old_extraction, &new_extraction);
     let def_ids: Vec<DefId> = new_graph.defs_in_file(file_id).map(|(id, _)| id).collect();
 
+    let def_id_at = |new_idx: usize, change: &str| -> Result<DefId, String> {
+        def_ids.get(new_idx).copied().ok_or_else(|| {
+            format!(
+                "def index {new_idx} out of range for {} ({change})",
+                c.path.display()
+            )
+        })
+    };
+
     let mut seeds = Vec::new();
     for change in changes {
         match change {
             DefChange::BodyChanged { new_idx } => seeds.push(Seed {
-                def: def_ids[new_idx],
+                def: def_id_at(new_idx, "BodyChanged")?,
                 kind: SeedKind::Body,
             }),
             DefChange::SigChanged { new_idx } => seeds.push(Seed {
-                def: def_ids[new_idx],
+                def: def_id_at(new_idx, "SigChanged")?,
                 kind: SeedKind::Signature,
             }),
             DefChange::Added { new_idx } => seeds.push(Seed {
-                def: def_ids[new_idx],
+                def: def_id_at(new_idx, "Added")?,
                 kind: SeedKind::Added,
             }),
             DefChange::ModuleInitChanged | DefChange::Removed { .. } => {
@@ -248,16 +257,26 @@ fn seed_added_file(new_graph: &Graph, file_id: FileId) -> Vec<Seed> {
 /// Scan every already-indexed file's raw import text (from `extractions`,
 /// which lines up index-for-index with `new_graph.files` — no re-reading or
 /// re-parsing) for a reference to any of `changed_paths` (basename substring
-/// match). Each match seeds that importing file's `ModuleInit`.
+/// match — both the full basename, e.g. `config.json`, and the basename with
+/// its extension stripped, e.g. `config`, so an extensionless import
+/// specifier like `import cfg from "./config"` still matches a changed
+/// `config.json`). Each match seeds that importing file's `ModuleInit`.
 fn scan_importers(
     new_graph: &Graph,
     extractions: &[CachedExtraction],
     changed_paths: &[PathBuf],
 ) -> Vec<Seed> {
-    let stems: Vec<&str> = changed_paths
-        .iter()
-        .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
-        .collect();
+    let mut stems: Vec<&str> = Vec::new();
+    for p in changed_paths {
+        if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+            stems.push(name);
+        }
+        if let Some(stem) = p.file_stem().and_then(|n| n.to_str()) {
+            if !stem.is_empty() {
+                stems.push(stem);
+            }
+        }
+    }
     if stems.is_empty() {
         return Vec::new();
     }

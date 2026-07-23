@@ -82,8 +82,14 @@ pub fn changed_files(repo: &Path, from: &str, to: Option<&str>) -> Result<Vec<Ch
 }
 
 /// Parses `git diff --name-status -z` output: NUL-separated tokens, each
-/// record being a status code (`M`/`A`/`D`/`R<score>`) followed by one path
-/// (two for `R`: old path, then new path).
+/// record being a status code (`M`/`A`/`D`/`R<score>`/`T`/`C<score>`)
+/// followed by one path (two for `R`/`C`: old path, then new path).
+///
+/// Uncommon statuses degrade rather than error: `T` (type change, e.g. file
+/// <-> symlink) maps to `Modified`, and `C<score>` (copy) maps to `Added` for
+/// the new path — both are sound over-approximations (Item 2). `U`
+/// (unmerged) and anything else unrecognized still fall through to the error
+/// arm: those genuinely can't be soundly classified here.
 fn parse_name_status(raw: &str) -> Result<Vec<ChangedFile>> {
     let mut tokens = raw.split('\0').filter(|s| !s.is_empty());
     let mut files = Vec::new();
@@ -110,6 +116,18 @@ fn parse_name_status(raw: &str) -> Result<Vec<ChangedFile>> {
                     status: FileStatus::Renamed {
                         old: PathBuf::from(old),
                     },
+                });
+            }
+            'T' => files.push(ChangedFile {
+                path: PathBuf::from(next_token(&mut tokens, "T")?),
+                status: FileStatus::Modified,
+            }),
+            'C' => {
+                let _old = next_token(&mut tokens, "C")?;
+                let new = next_token(&mut tokens, "C")?;
+                files.push(ChangedFile {
+                    path: PathBuf::from(new),
+                    status: FileStatus::Added,
                 });
             }
             _ => bail!("git diff --name-status: unrecognized status token {status:?}"),
@@ -220,6 +238,36 @@ mod tests {
         let dir = init_repo();
         let result = changed_files(dir.path(), "not-a-real-rev", None);
         assert!(result.is_err(), "expected Err for bad rev, got {result:?}");
+    }
+
+    #[test]
+    fn parse_name_status_type_change_maps_to_modified() {
+        let files = parse_name_status("T\0a.txt\0").expect("parse");
+        assert_eq!(
+            files,
+            vec![ChangedFile {
+                path: PathBuf::from("a.txt"),
+                status: FileStatus::Modified,
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_name_status_copy_maps_to_added() {
+        let files = parse_name_status("C100\0orig.txt\0copy.txt\0").expect("parse");
+        assert_eq!(
+            files,
+            vec![ChangedFile {
+                path: PathBuf::from("copy.txt"),
+                status: FileStatus::Added,
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_name_status_unmerged_is_still_an_error() {
+        let result = parse_name_status("U\0conflict.txt\0");
+        assert!(result.is_err(), "expected Err for U status, got {result:?}");
     }
 
     #[test]

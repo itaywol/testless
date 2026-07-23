@@ -210,9 +210,12 @@ fn seed_kind_label(kind: SeedKind) -> &'static str {
 
 /// `--from <rev>` diffed against the current worktree, classified into
 /// impact seeds (or a run-all fallback). Returns the process exit code: 0
-/// for a selection (including an empty one), 2 for run-all. A hard
-/// infrastructure error (bad rev, `git` missing, I/O failure) is instead
-/// surfaced as `Err` so `main` reports it and exits 1.
+/// for a selection (including an empty one), 2 for run-all. Failure to list
+/// changed files (bad rev, `git` missing, an unrecognized git status token)
+/// degrades to a run-all fallback (exit 2) rather than a hard error — see
+/// Item 2. Exit 1 stays reserved for index/cache infrastructure failures
+/// (indexing the repo, saving the cache), which are still surfaced as `Err`
+/// so `main` reports them.
 fn cmd_changes(from: String, to: Option<String>) -> Result<i32> {
     if to.is_some() {
         anyhow::bail!("--to is not yet supported (v1 only diffs --from against the worktree)");
@@ -233,12 +236,18 @@ fn cmd_changes(from: String, to: Option<String>) -> Result<i32> {
     // file in any repo that hasn't gitignored `.testless/` yet — polluting
     // both the `changed_files` stat and (harmlessly, but wastefully) the
     // importer scan.
-    let changed =
-        gitio::changed_files(&cwd, &from, None).context("listing files changed since --from")?;
-
-    let mode = classify(&cwd, &graph, &reg, &changed, &extractions, &|p| {
-        gitio::show_file(&cwd, &from, p)
-    });
+    let (mode, changed_count) = match gitio::changed_files(&cwd, &from, None) {
+        Ok(changed) => {
+            let mode = classify(&cwd, &graph, &reg, &changed, &extractions, &|p| {
+                gitio::show_file(&cwd, &from, p)
+            });
+            (mode, changed.len())
+        }
+        Err(err) => {
+            let reason = format!("listing files changed since --from: {err:#}");
+            (ChangeMode::RunAll { reason }, 0)
+        }
+    };
 
     cache.save(&graph, &extractions).context("saving cache")?;
 
@@ -288,7 +297,7 @@ fn cmd_changes(from: String, to: Option<String>) -> Result<i32> {
                     "mode": "selection",
                     "seeds": seeds_json,
                     "stats": {
-                        "changed_files": changed.len(),
+                        "changed_files": changed_count,
                         "seeds": seeds.len(),
                     },
                 })

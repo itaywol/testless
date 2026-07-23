@@ -31,19 +31,26 @@ impl Language for TsLanguage {
         // Always-present module-level def, spanning the whole file. Its
         // sig_hash covers only the "loose" top-level code: statements that
         // aren't themselves consumed as defs/imports by `walk_top_level`
-        // below. `export_statement` is skipped wholesale — an exported def
-        // (`export function f() {}`) is already covered by its own def hash,
-        // and a bare `export { x }` re-export carries no executable code of
-        // its own, so over-approximating by skipping the whole statement
-        // never hides a real loose-code change.
+        // below. Only `function_declaration`/`class_declaration` (which get
+        // their own def hash) and `import_statement` are skipped —
+        // `lexical_declaration` and `export_statement` are deliberately kept
+        // IN the module hash, matching lang-go and lang-rust: a top-level
+        // `export const CONFIG = makeConfig(1)` (or any other non-function
+        // const/let value) is never captured as its own def — only
+        // arrow/function-valued declarators become `Function` defs — so if
+        // its enclosing statement were skipped here too, a value edit would
+        // be hashed nowhere and produce zero seeds. Accepted side effect:
+        // since a top-level `function_declaration`/`class_declaration` is
+        // only skipped when it's a *direct* top-level child, an *exported*
+        // one is wrapped in `export_statement` and so is no longer skipped
+        // either — an edit to `export function f() {}`'s body now also
+        // dirties `<module>` in addition to `f`'s own body hash. That's a
+        // pure widening (over-approximation only adds seeds, never hides a
+        // real change), so it's fine.
         let module_init_skip = |n: &tree_sitter::Node| {
             matches!(
                 n.kind(),
-                "function_declaration"
-                    | "class_declaration"
-                    | "lexical_declaration"
-                    | "import_statement"
-                    | "export_statement"
+                "function_declaration" | "class_declaration" | "import_statement"
             )
         };
         defs.push(ExtractedDef {

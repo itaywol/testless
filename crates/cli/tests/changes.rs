@@ -100,7 +100,12 @@ const MATH_ADD_ORIGINAL: &str =
     "export function add(a: number, b: number): number { return a + b; }\n";
 
 /// (a) A pure body edit of `add` (same signature, different implementation)
-/// must seed exactly `add`'s def with `SeedKind::Body` — nothing else.
+/// must seed `add`'s def with `SeedKind::Body`. It also now seeds `<module>`
+/// with `SeedKind::ModuleInit`: since Item 1 (lang-ts module-scope
+/// visibility), `export_statement` is no longer excluded from the module-init
+/// hash, so an edit to an exported function's body — wrapped in
+/// `export_statement` — dirties `<module>` too. That's the accepted widening
+/// documented on `TsLanguage::extract`'s `module_init_skip`.
 #[test]
 fn body_edit_seeds_exactly_that_defs_body() {
     let tmp = tempfile::tempdir().unwrap();
@@ -114,6 +119,14 @@ fn body_edit_seeds_exactly_that_defs_body() {
     let registry = registry();
     let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
     let add = find_def(&graph, "add");
+    let file_id = testless_core::FileId(
+        graph
+            .files
+            .iter()
+            .position(|f| f.path.ends_with("math.ts"))
+            .unwrap() as u32,
+    );
+    let module_init = graph.module_init(file_id).expect("module_init present");
 
     let changed = vec![ChangedFile {
         path: PathBuf::from("src/math.ts"),
@@ -128,13 +141,70 @@ fn body_edit_seeds_exactly_that_defs_body() {
     };
 
     let mode = classify(root, &graph, &registry, &changed, &extractions, &old_src_of);
-    assert_eq!(
-        mode,
-        ChangeMode::Selection(vec![Seed {
-            def: add,
-            kind: SeedKind::Body,
-        }])
+    match mode {
+        ChangeMode::Selection(mut seeds) => {
+            seeds.sort_by_key(|s| s.def);
+            let mut expected = vec![
+                Seed {
+                    def: add,
+                    kind: SeedKind::Body,
+                },
+                Seed {
+                    def: module_init,
+                    kind: SeedKind::ModuleInit,
+                },
+            ];
+            expected.sort_by_key(|s| s.def);
+            assert_eq!(seeds, expected);
+        }
+        other => panic!("expected Selection, got {other:?}"),
+    }
+}
+
+/// Item 1 new coverage: a top-level `export const` whose value isn't an
+/// arrow/function (so it's never captured as its own def) still surfaces a
+/// change — as a `ModuleInit` seed — now that `lexical_declaration`/
+/// `export_statement` are no longer excluded from the module-init hash. Before
+/// the fix this value edit was hashed nowhere and produced zero seeds.
+#[test]
+fn export_const_value_edit_seeds_module_init() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write(
+        root,
+        "src/config.ts",
+        "export const CONFIG = makeConfig(1);\n",
     );
+
+    let registry = registry();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+
+    let changed = vec![ChangedFile {
+        path: PathBuf::from("src/config.ts"),
+        status: FileStatus::Modified,
+    }];
+    let old_src_of = |p: &Path| -> anyhow::Result<Option<String>> {
+        if p == Path::new("src/config.ts") {
+            Ok(Some("export const CONFIG = makeConfig(2);\n".to_string()))
+        } else {
+            Ok(None)
+        }
+    };
+
+    let mode = classify(root, &graph, &registry, &changed, &extractions, &old_src_of);
+    match mode {
+        ChangeMode::Selection(seeds) => {
+            assert!(
+                !seeds.is_empty(),
+                "expected a non-empty selection (module_init seed), got {seeds:?}"
+            );
+            assert!(
+                seeds.iter().all(|s| s.kind == SeedKind::ModuleInit),
+                "expected only ModuleInit seeds, got {seeds:?}"
+            );
+        }
+        other => panic!("expected Selection, got {other:?}"),
+    }
 }
 
 /// (b) An edit that only adds a comment (no token change) must classify as
@@ -369,6 +439,54 @@ fn unresolved_json_import_seeds_importers_module_init() {
     );
 }
 
+/// (h) Item 3: `scan_importers` also matches on the changed file's basename
+/// *without* extension — `import cfg from "./config"` (an extensionless
+/// specifier) must still match a changed `config.json`, since the raw import
+/// text never contains the `.json` suffix.
+#[test]
+fn extensionless_import_matches_changed_file_by_stem() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write(root, "src/config.json", "{\"a\":1}\n");
+    write(
+        root,
+        "src/consumer.ts",
+        "import cfg from \"./config\";\nexport function useCfg(): unknown { return cfg; }\n",
+    );
+
+    let registry = registry();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let consumer_id = testless_core::FileId(
+        graph
+            .files
+            .iter()
+            .position(|f| f.path.ends_with("consumer.ts"))
+            .unwrap() as u32,
+    );
+    let consumer_module_init = graph.module_init(consumer_id).expect("module_init present");
+
+    let changed = vec![ChangedFile {
+        path: PathBuf::from("src/config.json"),
+        status: FileStatus::Modified,
+    }];
+
+    let mode = classify(
+        root,
+        &graph,
+        &registry,
+        &changed,
+        &extractions,
+        &no_old_content,
+    );
+    assert_eq!(
+        mode,
+        ChangeMode::Selection(vec![Seed {
+            def: consumer_module_init,
+            kind: SeedKind::ModuleInit,
+        }])
+    );
+}
+
 // --- `testless changes` CLI e2e coverage (Plan 3, Task 5) --------------
 
 mod cli_changes {
@@ -483,6 +601,24 @@ mod cli_changes {
         let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
         assert_eq!(json["mode"], "run_all");
         assert!(json["reason"].as_str().unwrap().contains("package.json"));
+    }
+
+    /// Item 2: a `--from` rev `changed_files` can't resolve degrades to a
+    /// `run_all` fallback (exit 2) rather than a hard error — exit 1 stays
+    /// reserved for index/cache infrastructure failures.
+    #[test]
+    fn bad_from_rev_degrades_to_run_all_exit_2() {
+        let tmp = init_repo();
+        let assert = Command::cargo_bin("testless")
+            .unwrap()
+            .args(["changes", "--from", "not-a-real-rev"])
+            .current_dir(tmp.path())
+            .assert()
+            .code(2);
+        let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+        let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(json["mode"], "run_all");
+        assert!(json["reason"].as_str().unwrap().contains("--from"));
     }
 
     /// `--to` isn't supported yet in v1: documented punt, hard error exit 1.
