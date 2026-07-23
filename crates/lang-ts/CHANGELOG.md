@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0](https://github.com/itaywol/testless/compare/testless-lang-ts-v0.2.0...testless-lang-ts-v0.3.0) (2026-07-23)
+
+
+### Features
+
+* **core:** extraction model carries call/read references ([6339e65](https://github.com/itaywol/testless/commit/6339e6514c6a0c473e39033b646eb0fd6c9b0ce5))
+* **lang-ts:** call/read reference extraction ([9cdb269](https://github.com/itaywol/testless/commit/9cdb26955ded257f0beb06fe24ae687bba128a3d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * testless-core bumped from 0.2.0 to 0.3.0
+
 ## [0.2.0](https://github.com/itaywol/testless/compare/testless-lang-ts-v0.1.0...testless-lang-ts-v0.2.0) (2026-07-23)
 
 

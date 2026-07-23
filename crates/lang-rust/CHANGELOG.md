@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0](https://github.com/itaywol/testless/compare/testless-lang-rust-v0.2.0...testless-lang-rust-v0.3.0) (2026-07-23)
+
+
+### Features
+
+* **core:** extraction model carries call/read references ([6339e65](https://github.com/itaywol/testless/commit/6339e6514c6a0c473e39033b646eb0fd6c9b0ce5))
+* **lang-rust:** call/read reference extraction ([3733dac](https://github.com/itaywol/testless/commit/3733dac99c77a177d1a76949c460325f045da1b4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * testless-core bumped from 0.2.0 to 0.3.0
+
 ## [0.2.0](https://github.com/itaywol/testless/compare/testless-lang-rust-v0.1.0...testless-lang-rust-v0.2.0) (2026-07-23)
 
 
