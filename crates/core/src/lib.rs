@@ -1,4 +1,5 @@
 pub mod cache;
+pub mod classify;
 pub mod diffdef;
 pub mod discover;
 pub mod fingerprint;
