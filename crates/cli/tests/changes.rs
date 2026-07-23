@@ -497,4 +497,114 @@ mod cli_changes {
             .code(1)
             .stderr(predicate::str::contains("not yet supported"));
     }
+
+    // --- multi-language e2e coverage (Plan 3, Task 6) ------------------
+    //
+    // Mirrors (a)/(b) above but for Go and Rust repos, proving `changes`
+    // isn't TS-only. `go.mod`/`Cargo.toml` are config globs (see
+    // `classify::EXACT_CONFIG_NAMES`), which would force `RunAll` if they
+    // were part of the *changed* set — but here they're only present at
+    // commit time and untouched afterwards, so they never enter `changed`.
+
+    fn init_go_repo() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(
+            root.join("go.mod"),
+            "module example.com/go-app\n\ngo 1.22\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("calc")).unwrap();
+        std::fs::write(
+            root.join("calc/calc.go"),
+            "package calc\n\nfunc Add(a, b int) int { return a + b }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("calc/calc_test.go"),
+            "package calc\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 {\n\t\tt.Fail()\n\t}\n}\n",
+        )
+        .unwrap();
+        git(root, &["init", "-b", "main"]);
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-m", "initial"]);
+        tmp
+    }
+
+    /// A body-only edit of Go's `Add` (same signature) surfaces exactly one
+    /// seed — `Add`'s `body` change — as JSON on a piped stdout, exit 0.
+    #[test]
+    fn go_body_edit_yields_selection_seed_json() {
+        let tmp = init_go_repo();
+        let root = tmp.path();
+        std::fs::write(
+            root.join("calc/calc.go"),
+            "package calc\n\nfunc Add(a, b int) int { return a + b + 1 }\n",
+        )
+        .unwrap();
+
+        let assert = Command::cargo_bin("testless")
+            .unwrap()
+            .arg("changes")
+            .current_dir(root)
+            .assert()
+            .success();
+        let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+        let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| {
+            panic!("expected JSON stdout, got {out:?} ({e})");
+        });
+        assert_eq!(json["mode"], "selection");
+        let seeds = json["seeds"].as_array().expect("seeds array");
+        assert!(
+            seeds
+                .iter()
+                .any(|s| s["def"] == "Add" && s["kind"] == "body"),
+            "expected an Add/body seed, got {seeds:?}"
+        );
+    }
+
+    fn init_rust_repo() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"rust-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "pub mod math;\n").unwrap();
+        std::fs::write(
+            root.join("src/math.rs"),
+            "pub fn add(a: i64, b: i64) -> i64 { a + b }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn add_works() { assert_eq!(add(2, 2), 4); }\n}\n",
+        )
+        .unwrap();
+        git(root, &["init", "-b", "main"]);
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-m", "initial"]);
+        tmp
+    }
+
+    /// A comment-only edit in `math.rs` (no token change) yields an empty
+    /// seed list, still exit 0 — the Rust mirror of the TS comment-only case.
+    #[test]
+    fn rust_comment_only_edit_yields_empty_seeds() {
+        let tmp = init_rust_repo();
+        let root = tmp.path();
+        std::fs::write(
+            root.join("src/math.rs"),
+            "// adds two numbers\npub fn add(a: i64, b: i64) -> i64 { a + b }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn add_works() { assert_eq!(add(2, 2), 4); }\n}\n",
+        )
+        .unwrap();
+
+        let assert = Command::cargo_bin("testless")
+            .unwrap()
+            .arg("changes")
+            .current_dir(root)
+            .assert()
+            .success();
+        let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+        let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(json["mode"], "selection");
+        assert_eq!(json["seeds"].as_array().unwrap().len(), 0);
+    }
 }
