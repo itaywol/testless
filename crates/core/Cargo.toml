@@ -16,3 +16,4 @@ tree-sitter = "0.26.11"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+tree-sitter-typescript = "0.23.2"
