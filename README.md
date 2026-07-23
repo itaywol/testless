@@ -19,7 +19,7 @@ skips a test that could fail.
 
 | Capability | State |
 |---|---|
-| Index: function-level graph of defs, tests, imports | ✅ |
+| Index: function-level graph of defs, tests, imports, calls/reads | ✅ |
 | Incremental re-index (content-hash gated cache) | ✅ |
 | Languages: TypeScript/JavaScript, Go, Rust | ✅ |
 | Change detection (structural AST diff) | 🚧 |

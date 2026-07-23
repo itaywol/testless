@@ -1,4 +1,4 @@
-use testless_core::{indexer::index_repo, DefKind, Edge, FileId, Registry};
+use testless_core::{indexer::index_repo, CallTarget, DefKind, Edge, FileId, Registry};
 
 fn registry() -> Registry {
     Registry::new(vec![
@@ -44,5 +44,24 @@ fn dogfood_indexes_own_repo() {
             .count()
             > 20,
         "should find our own #[test] fns plus fixture tests"
+    );
+
+    let calls = g
+        .edges
+        .iter()
+        .filter(|e| matches!(e, Edge::Calls { .. }))
+        .count();
+    assert!(calls > 0, "should find calls in our own repo");
+
+    let cross_file_resolved_call = g.edges.iter().any(|e| match e {
+        Edge::Calls {
+            from,
+            to: CallTarget::Resolved(to),
+        } => g.def(*from).file != g.def(*to).file,
+        _ => false,
+    });
+    assert!(
+        cross_file_resolved_call,
+        "should find at least one resolved call edge crossing file boundaries"
     );
 }

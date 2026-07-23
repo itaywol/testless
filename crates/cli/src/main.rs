@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 
 use testless_core::cache::Cache;
-use testless_core::graph::{DefKind, Graph};
+use testless_core::graph::{CallTarget, DefKind, Edge, Graph};
 use testless_core::indexer::index_repo_incremental;
 use testless_core::Registry;
 
@@ -58,6 +58,35 @@ fn count_tests(graph: &Graph) -> usize {
         .count()
 }
 
+struct EdgeCounts {
+    calls: usize,
+    reads: usize,
+    unresolved: usize,
+}
+
+fn count_edges(graph: &Graph) -> EdgeCounts {
+    let mut calls = 0;
+    let mut reads = 0;
+    let mut unresolved = 0;
+    for edge in &graph.edges {
+        match edge {
+            Edge::Calls { to, .. } => {
+                calls += 1;
+                if matches!(to, CallTarget::Unknown(_)) {
+                    unresolved += 1;
+                }
+            }
+            Edge::Reads { .. } => reads += 1,
+            _ => {}
+        }
+    }
+    EdgeCounts {
+        calls,
+        reads,
+        unresolved,
+    }
+}
+
 fn cmd_index(full: bool) -> Result<()> {
     let cwd = std::env::current_dir().context("getting current directory")?;
     let cache = cache_for(&cwd);
@@ -81,12 +110,17 @@ fn cmd_index(full: bool) -> Result<()> {
     let files = graph.files.len();
     let defs = graph.defs.len();
     let tests = count_tests(&graph);
+    let edge_counts = count_edges(&graph);
 
     if std::io::stdout().is_terminal() {
         println!("Indexed {files} files: {defs} defs ({tests} tests)");
         println!(
             "  parsed: {}  reused: {}  time: {}ms",
             stats.parsed, stats.reused, ms
+        );
+        println!(
+            "  calls: {}  reads: {}  unresolved: {}",
+            edge_counts.calls, edge_counts.reads, edge_counts.unresolved
         );
     } else {
         let out = serde_json::json!({
@@ -97,6 +131,9 @@ fn cmd_index(full: bool) -> Result<()> {
             "parsed": stats.parsed,
             "reused": stats.reused,
             "ms": ms,
+            "calls": edge_counts.calls,
+            "reads": edge_counts.reads,
+            "unresolved": edge_counts.unresolved,
         });
         println!("{out}");
     }
@@ -114,6 +151,7 @@ fn cmd_stats() -> Result<()> {
     let defs = graph.defs.len();
     let tests = count_tests(&graph);
     let edges = graph.edges.len();
+    let edge_counts = count_edges(&graph);
     let cache_bytes = std::fs::metadata(cache.file())
         .map(|m| m.len())
         .unwrap_or(0);
@@ -123,6 +161,10 @@ fn cmd_stats() -> Result<()> {
         println!(
             "files: {files}  defs: {defs}  tests: {tests}  edges: {edges}  size: {cache_bytes} bytes"
         );
+        println!(
+            "calls: {}  reads: {}  unresolved: {}",
+            edge_counts.calls, edge_counts.reads, edge_counts.unresolved
+        );
     } else {
         let out = serde_json::json!({
             "version": 1,
@@ -131,6 +173,9 @@ fn cmd_stats() -> Result<()> {
             "tests": tests,
             "edges": edges,
             "cache_bytes": cache_bytes,
+            "calls": edge_counts.calls,
+            "reads": edge_counts.reads,
+            "unresolved": edge_counts.unresolved,
         });
         println!("{out}");
     }
