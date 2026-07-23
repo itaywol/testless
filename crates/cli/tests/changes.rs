@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use testless_core::classify::{classify, ChangeMode, Seed, SeedKind};
 use testless_core::gitio::{ChangedFile, FileStatus};
-use testless_core::indexer::index_repo;
+use testless_core::indexer::index_repo_incremental;
 use testless_core::{diff_defs, DefId, DefKind, Extraction, Graph, Language, Registry};
 use testless_lang_ts::TsLanguage;
 
@@ -112,7 +112,7 @@ fn body_edit_seeds_exactly_that_defs_body() {
     );
 
     let registry = registry();
-    let graph = index_repo(root, &registry).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
     let add = find_def(&graph, "add");
 
     let changed = vec![ChangedFile {
@@ -127,7 +127,7 @@ fn body_edit_seeds_exactly_that_defs_body() {
         }
     };
 
-    let mode = classify(root, &graph, &registry, &changed, &old_src_of);
+    let mode = classify(root, &graph, &registry, &changed, &extractions, &old_src_of);
     assert_eq!(
         mode,
         ChangeMode::Selection(vec![Seed {
@@ -151,7 +151,7 @@ fn comment_only_edit_yields_empty_selection() {
     );
 
     let registry = registry();
-    let graph = index_repo(root, &registry).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
 
     let changed = vec![ChangedFile {
         path: PathBuf::from("src/math.ts"),
@@ -165,7 +165,7 @@ fn comment_only_edit_yields_empty_selection() {
         }
     };
 
-    let mode = classify(root, &graph, &registry, &changed, &old_src_of);
+    let mode = classify(root, &graph, &registry, &changed, &extractions, &old_src_of);
     assert_eq!(mode, ChangeMode::Selection(vec![]));
 }
 
@@ -178,14 +178,21 @@ fn config_file_change_forces_run_all() {
     write(root, "src/math.ts", MATH_ADD_ORIGINAL);
 
     let registry = registry();
-    let graph = index_repo(root, &registry).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
 
     let changed = vec![ChangedFile {
         path: PathBuf::from("package.json"),
         status: FileStatus::Modified,
     }];
 
-    let mode = classify(root, &graph, &registry, &changed, &no_old_content);
+    let mode = classify(
+        root,
+        &graph,
+        &registry,
+        &changed,
+        &extractions,
+        &no_old_content,
+    );
     assert!(
         matches!(mode, ChangeMode::RunAll { .. }),
         "expected RunAll, got {mode:?}"
@@ -205,7 +212,7 @@ fn added_test_file_seeds_test_cases_and_module_init_as_added() {
     );
 
     let registry = registry();
-    let graph = index_repo(root, &registry).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
     let file_id = testless_core::FileId(
         graph
             .files
@@ -226,7 +233,14 @@ fn added_test_file_seeds_test_cases_and_module_init_as_added() {
         status: FileStatus::Added,
     }];
 
-    let mode = classify(root, &graph, &registry, &changed, &no_old_content);
+    let mode = classify(
+        root,
+        &graph,
+        &registry,
+        &changed,
+        &extractions,
+        &no_old_content,
+    );
     match mode {
         ChangeMode::Selection(mut seeds) => {
             seeds.sort_by_key(|s| s.def);
@@ -256,14 +270,21 @@ fn deleted_source_file_forces_run_all() {
     write(root, "src/math.ts", MATH_ADD_ORIGINAL);
 
     let registry = registry();
-    let graph = index_repo(root, &registry).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
 
     let changed = vec![ChangedFile {
         path: PathBuf::from("src/removed.ts"),
         status: FileStatus::Deleted,
     }];
 
-    let mode = classify(root, &graph, &registry, &changed, &no_old_content);
+    let mode = classify(
+        root,
+        &graph,
+        &registry,
+        &changed,
+        &extractions,
+        &no_old_content,
+    );
     match &mode {
         ChangeMode::RunAll { reason } => {
             assert!(reason.contains("removed.ts"), "reason: {reason}");
@@ -282,14 +303,21 @@ fn unindexed_file_with_no_importers_yields_empty_selection() {
     write(root, "README.md", "# hello\n");
 
     let registry = registry();
-    let graph = index_repo(root, &registry).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
 
     let changed = vec![ChangedFile {
         path: PathBuf::from("README.md"),
         status: FileStatus::Modified,
     }];
 
-    let mode = classify(root, &graph, &registry, &changed, &no_old_content);
+    let mode = classify(
+        root,
+        &graph,
+        &registry,
+        &changed,
+        &extractions,
+        &no_old_content,
+    );
     assert_eq!(mode, ChangeMode::Selection(vec![]));
 }
 
@@ -309,7 +337,7 @@ fn unresolved_json_import_seeds_importers_module_init() {
     );
 
     let registry = registry();
-    let graph = index_repo(root, &registry).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
     let consumer_id = testless_core::FileId(
         graph
             .files
@@ -324,7 +352,14 @@ fn unresolved_json_import_seeds_importers_module_init() {
         status: FileStatus::Modified,
     }];
 
-    let mode = classify(root, &graph, &registry, &changed, &no_old_content);
+    let mode = classify(
+        root,
+        &graph,
+        &registry,
+        &changed,
+        &extractions,
+        &no_old_content,
+    );
     assert_eq!(
         mode,
         ChangeMode::Selection(vec![Seed {
@@ -332,4 +367,134 @@ fn unresolved_json_import_seeds_importers_module_init() {
             kind: SeedKind::ModuleInit,
         }])
     );
+}
+
+// --- `testless changes` CLI e2e coverage (Plan 3, Task 5) --------------
+
+mod cli_changes {
+    use assert_cmd::Command;
+    use predicates::prelude::*;
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args([
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .status()
+            .expect("failed to spawn git");
+        assert!(status.success(), "git {args:?} failed in {}", dir.display());
+    }
+
+    fn init_repo() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src/math.ts"),
+            "export function add(a: number, b: number): number { return a + b; }\n",
+        )
+        .unwrap();
+        git(root, &["init", "-b", "main"]);
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-m", "initial"]);
+        tmp
+    }
+
+    /// (a) A body-only edit of `add` (same signature) surfaces exactly one
+    /// seed — `add`'s `body` change — as JSON on a piped stdout, exit 0.
+    #[test]
+    fn body_edit_yields_selection_seed_json() {
+        let tmp = init_repo();
+        let root = tmp.path();
+        std::fs::write(
+            root.join("src/math.ts"),
+            "export function add(a: number, b: number): number { return a + b + 1; }\n",
+        )
+        .unwrap();
+
+        let assert = Command::cargo_bin("testless")
+            .unwrap()
+            .arg("changes")
+            .current_dir(root)
+            .assert()
+            .success();
+        let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+        let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| {
+            panic!("expected JSON stdout, got {out:?} ({e})");
+        });
+        assert_eq!(json["version"], 1);
+        assert_eq!(json["mode"], "selection");
+        let seeds = json["seeds"].as_array().expect("seeds array");
+        assert!(
+            seeds
+                .iter()
+                .any(|s| s["def"] == "add" && s["kind"] == "body"),
+            "expected an add/body seed, got {seeds:?}"
+        );
+    }
+
+    /// (b) A comment-only edit (no token change) yields an empty seed list,
+    /// still exit 0.
+    #[test]
+    fn comment_only_edit_yields_empty_seeds() {
+        let tmp = init_repo();
+        let root = tmp.path();
+        std::fs::write(
+            root.join("src/math.ts"),
+            "export function add(a: number, b: number): number { /* no-op */ return a + b; }\n",
+        )
+        .unwrap();
+
+        let assert = Command::cargo_bin("testless")
+            .unwrap()
+            .arg("changes")
+            .current_dir(root)
+            .assert()
+            .success();
+        let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+        let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(json["mode"], "selection");
+        assert_eq!(json["seeds"].as_array().unwrap().len(), 0);
+    }
+
+    /// (c) A `package.json` edit forces `run_all` and a distinct (non-hard-
+    /// error) exit code of 2.
+    #[test]
+    fn config_file_edit_forces_run_all_exit_2() {
+        let tmp = init_repo();
+        let root = tmp.path();
+        std::fs::write(root.join("package.json"), "{}\n").unwrap();
+
+        let assert = Command::cargo_bin("testless")
+            .unwrap()
+            .arg("changes")
+            .current_dir(root)
+            .assert()
+            .code(2);
+        let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+        let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(json["mode"], "run_all");
+        assert!(json["reason"].as_str().unwrap().contains("package.json"));
+    }
+
+    /// `--to` isn't supported yet in v1: documented punt, hard error exit 1.
+    #[test]
+    fn to_flag_is_rejected() {
+        let tmp = init_repo();
+        Command::cargo_bin("testless")
+            .unwrap()
+            .args(["changes", "--to", "HEAD"])
+            .current_dir(tmp.path())
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("not yet supported"));
+    }
 }

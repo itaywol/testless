@@ -32,6 +32,7 @@ use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
 use tree_sitter::Parser;
 
+use crate::cache::CachedExtraction;
 use crate::diffdef::{diff_defs, DefChange};
 use crate::gitio::{ChangedFile, FileStatus};
 use crate::graph::{DefId, DefKind, FileId, Graph};
@@ -86,14 +87,19 @@ pub fn is_config_file(path: &Path) -> bool {
 }
 
 /// Classify `changed` against `new_graph` (built by indexing `repo`'s
-/// current content) into a `ChangeMode`. `old_src_of` yields the from-rev
-/// content of a given (repo-relative) path, `Ok(None)` if it didn't exist
-/// there, `Err` for any read failure.
+/// current content) into a `ChangeMode`. `extractions` is the
+/// `CachedExtraction` slice returned alongside `new_graph` by
+/// `index_repo_incremental` — same order as `new_graph.files`, reused here
+/// (instead of re-reading + re-parsing every indexed file) whenever an
+/// unrecognized changed path needs an importer scan. `old_src_of` yields the
+/// from-rev content of a given (repo-relative) path, `Ok(None)` if it didn't
+/// exist there, `Err` for any read failure.
 pub fn classify(
     repo: &Path,
     new_graph: &Graph,
     registry: &Registry,
     changed: &[ChangedFile],
+    extractions: &[CachedExtraction],
     old_src_of: &dyn Fn(&Path) -> anyhow::Result<Option<String>>,
 ) -> ChangeMode {
     for c in changed {
@@ -123,10 +129,11 @@ pub fn classify(
     }
 
     if !needs_import_scan.is_empty() {
-        match scan_importers(repo, new_graph, registry, &needs_import_scan) {
-            Ok(mut s) => seeds.append(&mut s),
-            Err(reason) => return ChangeMode::RunAll { reason },
-        }
+        seeds.append(&mut scan_importers(
+            new_graph,
+            extractions,
+            &needs_import_scan,
+        ));
     }
 
     dedup_seeds(&mut seeds);
@@ -238,33 +245,25 @@ fn seed_added_file(new_graph: &Graph, file_id: FileId) -> Vec<Seed> {
     seeds
 }
 
-/// Scan every indexed file's raw import text for a reference to any of
-/// `changed_paths` (basename substring match). Each match seeds that
-/// importing file's `ModuleInit`.
+/// Scan every already-indexed file's raw import text (from `extractions`,
+/// which lines up index-for-index with `new_graph.files` — no re-reading or
+/// re-parsing) for a reference to any of `changed_paths` (basename substring
+/// match). Each match seeds that importing file's `ModuleInit`.
 fn scan_importers(
-    repo: &Path,
     new_graph: &Graph,
-    registry: &Registry,
+    extractions: &[CachedExtraction],
     changed_paths: &[PathBuf],
-) -> Result<Vec<Seed>, String> {
+) -> Vec<Seed> {
     let stems: Vec<&str> = changed_paths
         .iter()
         .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
         .collect();
     if stems.is_empty() {
-        return Ok(Vec::new());
+        return Vec::new();
     }
 
     let mut seeds = Vec::new();
-    for (i, f) in new_graph.files.iter().enumerate() {
-        let Some(lang) = registry.for_path(&f.path) else {
-            continue;
-        };
-        let full = repo.join(&f.path);
-        let src = std::fs::read_to_string(&full)
-            .map_err(|e| format!("reading {} for import scan: {e}", f.path.display()))?;
-        let extraction = parse_and_extract(lang, &f.path, &src)
-            .map_err(|e| format!("parsing {} for import scan: {e:#}", f.path.display()))?;
+    for (i, (_path, _hash, extraction)) in extractions.iter().enumerate() {
         let matched = extraction
             .imports
             .iter()
@@ -279,7 +278,7 @@ fn scan_importers(
             }
         }
     }
-    Ok(seeds)
+    seeds
 }
 
 fn find_file_id(graph: &Graph, path: &Path) -> Option<FileId> {
@@ -380,6 +379,7 @@ mod tests {
             &graph,
             &registry,
             &changed,
+            &[],
             &|_| panic!("old_src_of should never be called once a config file short-circuits"),
         );
         assert!(
@@ -406,6 +406,7 @@ mod tests {
             &graph,
             &registry,
             &changed,
+            &[],
             &|_| Err(anyhow!("boom")),
         );
         match mode {
