@@ -1,4 +1,4 @@
-use testless_core::{indexer::index_repo, DefKind, Registry};
+use testless_core::{indexer::index_repo, DefKind, Edge, FileId, Registry};
 
 fn registry() -> Registry {
     Registry::new(vec![
@@ -13,19 +13,22 @@ fn indexes_rust_fixture() {
     let g = index_repo(std::path::Path::new("../../fixtures/rust-app"), &registry()).unwrap();
     assert!(g.defs.iter().any(|d| d.name == "Calc.push"));
     assert!(g.defs.iter().any(|d| d.kind == DefKind::TestCase));
-    let fmt = g
-        .files
-        .iter()
-        .position(|f| f.path.ends_with("fmt.rs"))
-        .unwrap() as u32;
-    let math = g
-        .files
-        .iter()
-        .position(|f| f.path.ends_with("math.rs"))
-        .unwrap() as u32;
-    assert!(g
-        .edges
-        .contains(&(fmt, testless_core::EdgeKind::Imports, math)));
+    let fmt = FileId(
+        g.files
+            .iter()
+            .position(|f| f.path.ends_with("fmt.rs"))
+            .unwrap() as u32,
+    );
+    let math = FileId(
+        g.files
+            .iter()
+            .position(|f| f.path.ends_with("math.rs"))
+            .unwrap() as u32,
+    );
+    assert!(g.edges.contains(&Edge::Imports {
+        from: fmt,
+        to: math
+    }));
 }
 
 #[test]

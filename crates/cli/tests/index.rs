@@ -1,6 +1,6 @@
 use testless_core::{
     indexer::{index_repo, index_repo_incremental},
-    DefKind, EdgeKind, Registry,
+    DefKind, Edge, FileId, Registry,
 };
 
 fn registry() -> Registry {
@@ -36,31 +36,41 @@ fn indexes_both_fixture_apps() {
         .any(|d| d.name == "add" && d.kind == DefKind::Function));
     assert!(g.defs.iter().any(|d| d.kind == DefKind::TestCase));
     // format.ts imports math.ts
-    let format = g
-        .files
-        .iter()
-        .position(|f| f.path.ends_with("format.ts"))
-        .unwrap() as u32;
-    let math = g
-        .files
-        .iter()
-        .position(|f| f.path.ends_with("math.ts"))
-        .unwrap() as u32;
-    assert!(g.edges.contains(&(format, EdgeKind::Imports, math)));
+    let format = FileId(
+        g.files
+            .iter()
+            .position(|f| f.path.ends_with("format.ts"))
+            .unwrap() as u32,
+    );
+    let math = FileId(
+        g.files
+            .iter()
+            .position(|f| f.path.ends_with("math.ts"))
+            .unwrap() as u32,
+    );
+    assert!(g.edges.contains(&Edge::Imports {
+        from: format,
+        to: math
+    }));
 
     let g = index_repo(std::path::Path::new("../../fixtures/go-app"), &registry()).unwrap();
     assert!(g.defs.iter().any(|d| d.name == "Calc.Push"));
-    let fmt2 = g
-        .files
-        .iter()
-        .position(|f| f.path.ends_with("fmt2.go"))
-        .unwrap() as u32;
-    let calc = g
-        .files
-        .iter()
-        .position(|f| f.path.ends_with("calc.go"))
-        .unwrap() as u32;
-    assert!(g.edges.contains(&(fmt2, EdgeKind::Imports, calc)));
+    let fmt2 = FileId(
+        g.files
+            .iter()
+            .position(|f| f.path.ends_with("fmt2.go"))
+            .unwrap() as u32,
+    );
+    let calc = FileId(
+        g.files
+            .iter()
+            .position(|f| f.path.ends_with("calc.go"))
+            .unwrap() as u32,
+    );
+    assert!(g.edges.contains(&Edge::Imports {
+        from: fmt2,
+        to: calc
+    }));
 }
 
 #[test]
@@ -84,20 +94,22 @@ fn dedups_repeated_imports_of_the_same_target() {
     .unwrap();
 
     let g = index_repo(root, &registry()).unwrap();
-    let main = g
-        .files
-        .iter()
-        .position(|f| f.path.ends_with("main.ts"))
-        .unwrap() as u32;
-    let m = g
-        .files
-        .iter()
-        .position(|f| f.path.ends_with("m.ts"))
-        .unwrap() as u32;
+    let main = FileId(
+        g.files
+            .iter()
+            .position(|f| f.path.ends_with("main.ts"))
+            .unwrap() as u32,
+    );
+    let m = FileId(
+        g.files
+            .iter()
+            .position(|f| f.path.ends_with("m.ts"))
+            .unwrap() as u32,
+    );
     let import_edges = g
         .edges
         .iter()
-        .filter(|e| **e == (main, EdgeKind::Imports, m))
+        .filter(|e| **e == Edge::Imports { from: main, to: m })
         .count();
     assert_eq!(import_edges, 1);
 }

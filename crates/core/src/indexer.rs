@@ -6,7 +6,7 @@ use tree_sitter::Parser;
 
 use crate::cache::CachedExtraction;
 use crate::discover::discover;
-use crate::graph::{Def, EdgeKind, FileNode, Graph, NodeId};
+use crate::graph::{Def, DefId, Edge, FileId, FileNode, Graph};
 use crate::language::{Extraction, Language, Registry};
 
 /// Counts of work done by [`index_repo_incremental`]: how many files were
@@ -101,15 +101,18 @@ pub fn index_repo_incremental(
             if def.kind == crate::graph::DefKind::ModuleInit {
                 continue;
             }
-            let node_id = (base + i) as NodeId;
+            let node_id = DefId((base + i) as u32);
             let parent_id = match def.parent {
-                Some(p) => (base + p) as NodeId,
+                Some(p) => DefId((base + p) as u32),
                 None => match module_init_id {
                     Some(m) => m,
                     None => continue,
                 },
             };
-            graph.add_edge(parent_id, EdgeKind::Contains, node_id);
+            graph.add_edge(Edge::Contains {
+                parent: parent_id,
+                child: node_id,
+            });
         }
 
         hashes.push(hash);
@@ -124,36 +127,43 @@ pub fn index_repo_incremental(
     // `seen` dedups repeated imports of the same target from the same file
     // (e.g. a type-only import alongside a value import of the same
     // module) down to a single `Imports` edge.
-    let mut seen: HashSet<(NodeId, NodeId)> = HashSet::new();
+    let mut seen: HashSet<(FileId, FileId)> = HashSet::new();
     for (file_id, ((rel_path, lang), extraction)) in
         files.iter().zip(extractions.iter()).enumerate()
     {
-        let file_id = file_id as NodeId;
+        let file_id = FileId(file_id as u32);
         for import in &extraction.imports {
             let Some(resolved) = lang.resolve_import(rel_path, &import.raw, root) else {
                 continue;
             };
 
             if let Some(target_id) = graph.files.iter().position(|f| f.path == resolved) {
-                let target_id = target_id as NodeId;
+                let target_id = FileId(target_id as u32);
                 if target_id != file_id && seen.insert((file_id, target_id)) {
-                    graph.add_edge(file_id, EdgeKind::Imports, target_id);
+                    graph.add_edge(Edge::Imports {
+                        from: file_id,
+                        to: target_id,
+                    });
                 }
                 continue;
             }
 
-            let dir_targets: Vec<NodeId> = graph
+            let dir_targets: Vec<FileId> = graph
                 .files
                 .iter()
                 .enumerate()
                 .filter(|(target_id, f)| {
-                    f.path.parent() == Some(resolved.as_path()) && *target_id as NodeId != file_id
+                    f.path.parent() == Some(resolved.as_path())
+                        && FileId(*target_id as u32) != file_id
                 })
-                .map(|(target_id, _)| target_id as NodeId)
+                .map(|(target_id, _)| FileId(target_id as u32))
                 .collect();
             for target_id in dir_targets {
                 if seen.insert((file_id, target_id)) {
-                    graph.add_edge(file_id, EdgeKind::Imports, target_id);
+                    graph.add_edge(Edge::Imports {
+                        from: file_id,
+                        to: target_id,
+                    });
                 }
             }
         }
