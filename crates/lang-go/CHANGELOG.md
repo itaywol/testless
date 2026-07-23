@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.0](https://github.com/itaywol/testless/compare/testless-lang-go-v0.3.0...testless-lang-go-v0.4.0) (2026-07-23)
+
+
+### Features
+
+* **core:** def-level structural diff with sig/body split ([2766107](https://github.com/itaywol/testless/commit/27661076be468812f1bcca7934ec439832a15a35))
+
+
+### Bug Fixes
+
+* **lang-go:** init() body hashes into ModuleInit instead of being skipped ([31db7a0](https://github.com/itaywol/testless/commit/31db7a00224bb0e18ccc0c0459c616378b281775))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * testless-core bumped from 0.3.0 to 0.4.0
+
 ## [0.3.0](https://github.com/itaywol/testless/compare/testless-lang-go-v0.2.0...testless-lang-go-v0.3.0) (2026-07-23)
 
 

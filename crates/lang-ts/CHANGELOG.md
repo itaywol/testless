@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.4.0](https://github.com/itaywol/testless/compare/testless-lang-ts-v0.3.0...testless-lang-ts-v0.4.0) (2026-07-23)
+
+
+### Features
+
+* **core:** def-level structural diff with sig/body split ([2766107](https://github.com/itaywol/testless/commit/27661076be468812f1bcca7934ec439832a15a35))
+
+
+### Bug Fixes
+
+* **lang-ts:** content-aware module-init skip — precise exported-def hashing ([73c7b7a](https://github.com/itaywol/testless/commit/73c7b7a571146d19aac2cebdfd0d00341426da27))
+* TS module-scope change visibility, git-status widening, review nits ([eba2664](https://github.com/itaywol/testless/commit/eba266441a6b1e5260131597aa197a867fc3eb46))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * testless-core bumped from 0.3.0 to 0.4.0
+
 ## [0.3.0](https://github.com/itaywol/testless/compare/testless-lang-ts-v0.2.0...testless-lang-ts-v0.3.0) (2026-07-23)
 
 
