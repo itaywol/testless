@@ -16,6 +16,18 @@
 //! An `add`-body edit must select exactly the two `describe("add")` tests
 //! and `format.test.ts`'s `"formats"` (via `fmt` -> `add`), and must NOT
 //! select `unrelatedHelper`'s test or `unrelated.test.ts`'s test.
+//!
+//! Plan 4, Task 4 adds cross-language e2e coverage in the same style, each
+//! in its own tempdir/git repo:
+//! - Go (`go_*` below): `calc.Add` (called by `TestAdd`'s subtests and,
+//!   cross-package, by `fmt2.Fmt`) plus an unrelated `calc.Unrelated` and a
+//!   fully independent `third` package.
+//! - Rust (`rust_*` below): `math::add` (called by its own `tests` module
+//!   and, cross-module, by `fmt::fmt`) plus a fully independent `extra`
+//!   module.
+//! - Module-init widening (`module_init_*` below, TS): a changed top-level
+//!   `console.log` must widen to every test in the transitive importer
+//!   closure of the changed file, not just its own tests.
 
 use assert_cmd::Command;
 
@@ -305,5 +317,518 @@ fn args_format_prints_vitest_run_lines() {
         lines.len(),
         3,
         "expected exactly 3 command lines, got {out:?}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Go scenario (Plan 4, Task 4): a body edit to `calc.Add` must select
+// `TestAdd`'s two subtests (calc package) and `fmt2`'s `TestFmt` (a
+// cross-package caller reached via `calc.Add`), but must NOT select calc's
+// own `TestUnrelated` or `third`'s independent `TestSolo`. Caveat from
+// prior tasks: `go.mod` is written once at repo init and never touched
+// again by these tests (editing it would force `run_all`).
+// ---------------------------------------------------------------------
+
+const GO_MOD: &str = "module example.com/go-app\n\ngo 1.22\n";
+
+const CALC_GO: &str = "\
+package calc
+
+func Add(a, b int) int { return a + b }
+
+func Unrelated(x int) int { return x * 2 }
+";
+
+const CALC_GO_BODY_EDITED: &str = "\
+package calc
+
+func Add(a, b int) int { return a + b + 1 }
+
+func Unrelated(x int) int { return x * 2 }
+";
+
+const CALC_TEST_GO: &str = "\
+package calc
+
+import \"testing\"
+
+func TestAdd(t *testing.T) {
+	t.Run(\"negatives\", func(t *testing.T) {
+		if Add(-1, -2) != -3 {
+			t.Fail()
+		}
+	})
+	t.Run(\"zero\", func(t *testing.T) {
+		if Add(0, 5) != 5 {
+			t.Fail()
+		}
+	})
+}
+
+func TestUnrelated(t *testing.T) {
+	if Unrelated(2) != 4 {
+		t.Fail()
+	}
+}
+";
+
+const FMT2_GO: &str = "\
+package fmt2
+
+import (
+	\"fmt\"
+
+	\"example.com/go-app/calc\"
+)
+
+func Fmt(a, b int) string { return fmt.Sprintf(\"%d\", calc.Add(a, b)) }
+";
+
+const FMT2_TEST_GO: &str = "\
+package fmt2
+
+import \"testing\"
+
+func TestFmt(t *testing.T) {
+	if Fmt(1, 2) != \"3\" {
+		t.Fail()
+	}
+}
+";
+
+const THIRD_GO: &str = "\
+package third
+
+func Solo(x int) int { return x + 1 }
+";
+
+const THIRD_TEST_GO: &str = "\
+package third
+
+import \"testing\"
+
+func TestSolo(t *testing.T) {
+	if Solo(1) != 2 {
+		t.Fail()
+	}
+}
+";
+
+fn init_go_repo() -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("calc")).unwrap();
+    std::fs::create_dir_all(root.join("fmt2")).unwrap();
+    std::fs::create_dir_all(root.join("third")).unwrap();
+    std::fs::write(root.join("go.mod"), GO_MOD).unwrap();
+    std::fs::write(root.join("calc/calc.go"), CALC_GO).unwrap();
+    std::fs::write(root.join("calc/calc_test.go"), CALC_TEST_GO).unwrap();
+    std::fs::write(root.join("fmt2/fmt2.go"), FMT2_GO).unwrap();
+    std::fs::write(root.join("fmt2/fmt2_test.go"), FMT2_TEST_GO).unwrap();
+    std::fs::write(root.join("third/third.go"), THIRD_GO).unwrap();
+    std::fs::write(root.join("third/third_test.go"), THIRD_TEST_GO).unwrap();
+    git(root, &["init", "-b", "main"]);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-m", "initial"]);
+    tmp
+}
+
+/// Go: `calc.Add`'s body edit selects `TestAdd`'s two subtests and
+/// `fmt2`'s `TestFmt` (via `calc.Add`), excludes `TestUnrelated` and
+/// `third`'s `TestSolo`. `--format args` emits a `go test` line for the
+/// calc package with a `-run '^TestAdd$'`-style anchor.
+///
+/// `TestAdd` itself (the bare, no-subtest name) is *also* selected: a
+/// `t.Run` subtest is genuinely contained within its parent test function
+/// (the subtest closure only runs as part of `TestAdd`'s body executing),
+/// so the walker's `Contains`-parent widening (see `walk::impacted_tests`)
+/// sweeps the parent test in alongside its impacted subtests — unlike the
+/// TS `describe`/`it` fixture above, where `describe` isn't itself a
+/// `TestCase` def.
+#[test]
+fn go_add_body_edit_selects_add_and_fmt_tests_excludes_others() {
+    let tmp = init_go_repo();
+    let root = tmp.path();
+    std::fs::write(root.join("calc/calc.go"), CALC_GO_BODY_EDITED).unwrap();
+
+    let assert = Command::cargo_bin("testless")
+        .unwrap()
+        .arg("select")
+        .current_dir(root)
+        .assert()
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| {
+        panic!("expected JSON stdout, got {out:?} ({e})");
+    });
+
+    assert_eq!(json["mode"], "selection");
+    let tests = json["tests"].as_array().expect("tests array");
+    let names: Vec<Vec<String>> = tests
+        .iter()
+        .map(|t| {
+            t["name"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s.as_str().unwrap().to_string())
+                .collect()
+        })
+        .collect();
+
+    assert!(
+        names.contains(&vec!["TestAdd".to_string()]),
+        "expected bare TestAdd (parent of the impacted subtests) in {names:?}"
+    );
+    assert!(
+        names.contains(&vec!["TestAdd".to_string(), "negatives".to_string()]),
+        "expected TestAdd/negatives in {names:?}"
+    );
+    assert!(
+        names.contains(&vec!["TestAdd".to_string(), "zero".to_string()]),
+        "expected TestAdd/zero in {names:?}"
+    );
+    assert!(
+        names.contains(&vec!["TestFmt".to_string()]),
+        "expected TestFmt in {names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|n| n.first().map(|s| s.as_str()) == Some("TestUnrelated")),
+        "TestUnrelated must NOT be selected, got {names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|n| n.first().map(|s| s.as_str()) == Some("TestSolo")),
+        "third's TestSolo must NOT be selected, got {names:?}"
+    );
+    assert_eq!(
+        tests.len(),
+        4,
+        "expected exactly 4 selected tests, got {tests:?}"
+    );
+
+    for t in tests {
+        assert_eq!(t["runner"], "gotest");
+        assert_eq!(t["lang"], "go");
+    }
+
+    let assert = Command::cargo_bin("testless")
+        .unwrap()
+        .args(["select", "--format", "args"])
+        .current_dir(root)
+        .assert()
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(
+        out.lines()
+            .any(|l| l.starts_with("go test ./calc") && l.contains("-run '^TestAdd$")),
+        "expected a go test line for calc's TestAdd, got {out:?}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Rust scenario (Plan 4, Task 4): a body edit to `math::add` must select
+// `math`'s own test (`tests::add_works`) and `fmt`'s test
+// (`tests::fmt_works`, a cross-module caller reached via
+// `crate::math::add`), excluding `extra`'s independent test. A
+// comment-only edit of `add` yields an empty selection. Caveat: `Cargo.toml`
+// is written once at repo init and never touched again (editing it would
+// force `run_all`).
+// ---------------------------------------------------------------------
+
+const RUST_CARGO_TOML: &str = "\
+[package]
+name = \"select-rust-fixture\"
+version = \"0.1.0\"
+edition = \"2021\"
+
+[workspace]
+";
+
+const RUST_LIB_RS: &str = "\
+mod math;
+mod fmt;
+mod extra;
+";
+
+const RUST_MATH_RS: &str = "\
+pub fn add(a: i64, b: i64) -> i64 { a + b }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_works() { assert_eq!(add(2, 2), 4); }
+}
+";
+
+const RUST_MATH_RS_BODY_EDITED: &str = "\
+pub fn add(a: i64, b: i64) -> i64 { a + b + 1 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_works() { assert_eq!(add(2, 2), 4); }
+}
+";
+
+const RUST_MATH_RS_COMMENT_EDITED: &str = "\
+pub fn add(a: i64, b: i64) -> i64 { /* no-op */ a + b }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_works() { assert_eq!(add(2, 2), 4); }
+}
+";
+
+const RUST_FMT_RS: &str = "\
+pub fn fmt(a: i64, b: i64) -> String { format!(\"{}\", crate::math::add(a, b)) }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn fmt_works() { assert_eq!(crate::fmt::fmt(1, 2), \"3\"); }
+}
+";
+
+const RUST_EXTRA_RS: &str = "\
+pub fn extra_fn(x: i64) -> i64 { x + 100 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extra_works() { assert_eq!(extra_fn(1), 101); }
+}
+";
+
+fn init_rust_repo() -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("Cargo.toml"), RUST_CARGO_TOML).unwrap();
+    std::fs::write(root.join("src/lib.rs"), RUST_LIB_RS).unwrap();
+    std::fs::write(root.join("src/math.rs"), RUST_MATH_RS).unwrap();
+    std::fs::write(root.join("src/fmt.rs"), RUST_FMT_RS).unwrap();
+    std::fs::write(root.join("src/extra.rs"), RUST_EXTRA_RS).unwrap();
+    git(root, &["init", "-b", "main"]);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-m", "initial"]);
+    tmp
+}
+
+/// Rust: `math::add`'s body edit selects `tests::add_works` (math's own
+/// test) and `tests::fmt_works` (fmt's test, via `crate::math::add`),
+/// excludes `extra`'s independent test.
+#[test]
+fn rust_add_body_edit_selects_math_and_fmt_tests_excludes_extra() {
+    let tmp = init_rust_repo();
+    let root = tmp.path();
+    std::fs::write(root.join("src/math.rs"), RUST_MATH_RS_BODY_EDITED).unwrap();
+
+    let assert = Command::cargo_bin("testless")
+        .unwrap()
+        .arg("select")
+        .current_dir(root)
+        .assert()
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| {
+        panic!("expected JSON stdout, got {out:?} ({e})");
+    });
+
+    assert_eq!(json["mode"], "selection");
+    let tests = json["tests"].as_array().expect("tests array");
+    let names: Vec<Vec<String>> = tests
+        .iter()
+        .map(|t| {
+            t["name"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s.as_str().unwrap().to_string())
+                .collect()
+        })
+        .collect();
+
+    assert!(
+        names.contains(&vec!["tests".to_string(), "add_works".to_string()]),
+        "expected tests::add_works in {names:?}"
+    );
+    assert!(
+        names.contains(&vec!["tests".to_string(), "fmt_works".to_string()]),
+        "expected tests::fmt_works in {names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|n| n.last().map(|s| s.as_str()) == Some("extra_works")),
+        "extra's test must NOT be selected, got {names:?}"
+    );
+    assert_eq!(
+        tests.len(),
+        2,
+        "expected exactly 2 selected tests, got {tests:?}"
+    );
+
+    for t in tests {
+        assert_eq!(t["runner"], "cargo");
+        assert_eq!(t["lang"], "rust");
+    }
+}
+
+/// Rust: a comment-only edit of `add`'s body (no token change) yields an
+/// empty selection, same invariant as the TS scenario above.
+#[test]
+fn rust_comment_only_edit_yields_empty_tests() {
+    let tmp = init_rust_repo();
+    let root = tmp.path();
+    std::fs::write(root.join("src/math.rs"), RUST_MATH_RS_COMMENT_EDITED).unwrap();
+
+    let assert = Command::cargo_bin("testless")
+        .unwrap()
+        .arg("select")
+        .current_dir(root)
+        .assert()
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+
+    assert_eq!(json["mode"], "selection");
+    assert_eq!(json["tests"].as_array().unwrap().len(), 0);
+    assert_eq!(json["stats"]["selected"], 0);
+    assert_eq!(json["stats"]["seeds"], 0);
+}
+
+// ---------------------------------------------------------------------
+// Module-init widening scenario (Plan 4, Task 4, TS): a changed top-level
+// `console.log` in `src/side.ts` must widen to every test in the
+// transitive importer closure of `side.ts` — `side.test.ts` (direct
+// importer), `mid.test.ts` (imports `mid.ts`, which imports `side.ts`),
+// and `top.test.ts` (imports `top.ts`, which imports `mid.ts`, two hops
+// removed from `side.ts`) — while `unrelated.test.ts`, which imports
+// nothing in the chain, stays excluded.
+// ---------------------------------------------------------------------
+
+const SIDE_TS: &str = "\
+export const value = 1;
+console.log(\"side effect\");
+";
+
+const SIDE_TS_EDITED: &str = "\
+export const value = 1;
+console.log(\"side effect v2\");
+";
+
+const MID_TS: &str = "\
+import { value } from \"./side\";
+export const midValue = value + 1;
+";
+
+const TOP_TS: &str = "\
+import { midValue } from \"./mid\";
+export const topValue = midValue + 1;
+";
+
+const SIDE_TEST_TS: &str = "\
+import { it, expect } from \"vitest\";
+import { value } from \"./side\";
+it(\"side value\", () => { expect(value).toBe(1); });
+";
+
+const MID_TEST_TS: &str = "\
+import { it, expect } from \"vitest\";
+import { midValue } from \"./mid\";
+it(\"mid value\", () => { expect(midValue).toBe(2); });
+";
+
+const TOP_TEST_TS: &str = "\
+import { it, expect } from \"vitest\";
+import { topValue } from \"./top\";
+it(\"top value\", () => { expect(topValue).toBe(3); });
+";
+
+const MODULE_INIT_UNRELATED_TEST_TS: &str = "\
+import { it, expect } from \"vitest\";
+it(\"stands fully alone\", () => { expect(1 + 1).toBe(2); });
+";
+
+fn init_module_init_repo() -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("package.json"),
+        "{ \"name\": \"module-init-fixture\" }\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("src/side.ts"), SIDE_TS).unwrap();
+    std::fs::write(root.join("src/mid.ts"), MID_TS).unwrap();
+    std::fs::write(root.join("src/top.ts"), TOP_TS).unwrap();
+    std::fs::write(root.join("src/side.test.ts"), SIDE_TEST_TS).unwrap();
+    std::fs::write(root.join("src/mid.test.ts"), MID_TEST_TS).unwrap();
+    std::fs::write(root.join("src/top.test.ts"), TOP_TEST_TS).unwrap();
+    std::fs::write(
+        root.join("src/unrelated.test.ts"),
+        MODULE_INIT_UNRELATED_TEST_TS,
+    )
+    .unwrap();
+    git(root, &["init", "-b", "main"]);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-m", "initial"]);
+    tmp
+}
+
+/// A top-level (module-init) edit in `side.ts` widens to every test in its
+/// transitive importer closure — including `top.test.ts`, two import hops
+/// removed — but not `unrelated.test.ts`.
+#[test]
+fn module_init_edit_selects_all_transitive_importer_tests() {
+    let tmp = init_module_init_repo();
+    let root = tmp.path();
+    std::fs::write(root.join("src/side.ts"), SIDE_TS_EDITED).unwrap();
+
+    let assert = Command::cargo_bin("testless")
+        .unwrap()
+        .arg("select")
+        .current_dir(root)
+        .assert()
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| {
+        panic!("expected JSON stdout, got {out:?} ({e})");
+    });
+
+    assert_eq!(json["mode"], "selection");
+    let tests = json["tests"].as_array().expect("tests array");
+    let files: Vec<String> = tests
+        .iter()
+        .map(|t| t["file"].as_str().unwrap().to_string())
+        .collect();
+
+    for expected in ["src/side.test.ts", "src/mid.test.ts", "src/top.test.ts"] {
+        assert!(
+            files.iter().any(|f| f == expected),
+            "expected {expected} in selected files {files:?}"
+        );
+    }
+    assert!(
+        !files.iter().any(|f| f == "src/unrelated.test.ts"),
+        "unrelated.test.ts must NOT be selected, got {files:?}"
+    );
+    assert_eq!(
+        tests.len(),
+        3,
+        "expected exactly 3 selected tests, got {tests:?}"
     );
 }
