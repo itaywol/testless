@@ -39,7 +39,12 @@ impl Language for RustLanguage {
         let mut imports = Vec::new();
         walk_items(root, src_bytes, &mut defs, &mut mod_stack, &mut imports);
 
-        Extraction { defs, imports }
+        Extraction {
+            defs,
+            imports,
+            calls: Vec::new(),
+            reads: Vec::new(),
+        }
     }
 
     /// Tier-1 (best-effort, over-approximating) resolution: only `mod x;`

@@ -48,7 +48,12 @@ impl Language for TsLanguage {
         let mut imports = Vec::new();
         collect_imports(root, src_bytes, &mut imports);
 
-        Extraction { defs, imports }
+        Extraction {
+            defs,
+            imports,
+            calls: Vec::new(),
+            reads: Vec::new(),
+        }
     }
 
     fn resolve_import(&self, from_file: &Path, raw: &str, repo_root: &Path) -> Option<PathBuf> {
