@@ -2,11 +2,18 @@
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "release-type": "rust",
   "packages": {
-    ".": {
-      "release-type": "rust",
-      "package-name": "testless",
-      "include-component-in-tag": false
-    }
+    "crates/core": { "package-name": "testless-core", "component": "testless-core" },
+    "crates/lang-ts": { "package-name": "testless-lang-ts", "component": "testless-lang-ts" },
+    "crates/lang-go": { "package-name": "testless-lang-go", "component": "testless-lang-go" },
+    "crates/lang-rust": { "package-name": "testless-lang-rust", "component": "testless-lang-rust" },
+    "crates/cli": { "package-name": "testless", "component": "testless" }
   },
-  "plugins": [{ "type": "cargo-workspace" }]
+  "plugins": [
+    { "type": "cargo-workspace" },
+    {
+      "type": "linked-versions",
+      "groupName": "testless",
+      "components": ["testless-core", "testless-lang-ts", "testless-lang-go", "testless-lang-rust", "testless"]
+    }
+  ]
 }
