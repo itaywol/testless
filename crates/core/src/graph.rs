@@ -52,16 +52,34 @@ pub struct Graph {
     pub files: Vec<FileNode>,
     pub defs: Vec<Def>,
     pub edges: Vec<Edge>,
+    /// `ModuleInit` def per file, indexed by `FileId` — built incrementally
+    /// in `add_def` so `module_init` is an O(1) lookup instead of an
+    /// O(defs) scan. Kept in sync with `add_file` (which appends `None` so
+    /// the vec stays aligned with `files`) and `add_def`.
+    module_inits: Vec<Option<DefId>>,
+    /// Defs belonging to each file, indexed by `FileId` — built
+    /// incrementally in `add_def` so `defs_in_file` is O(defs in that
+    /// file) instead of an O(all defs) scan.
+    file_defs: Vec<Vec<DefId>>,
 }
 
 impl Graph {
     pub fn add_file(&mut self, f: FileNode) -> FileId {
         self.files.push(f);
+        self.module_inits.push(None);
+        self.file_defs.push(Vec::new());
         FileId((self.files.len() - 1) as u32)
     }
     pub fn add_def(&mut self, d: Def) -> DefId {
+        let file = d.file;
+        let kind = d.kind;
         self.defs.push(d);
-        DefId((self.defs.len() - 1) as u32)
+        let id = DefId((self.defs.len() - 1) as u32);
+        self.file_defs[file.0 as usize].push(id);
+        if kind == DefKind::ModuleInit {
+            self.module_inits[file.0 as usize] = Some(id);
+        }
+        id
     }
     pub fn add_edge(&mut self, e: Edge) {
         self.edges.push(e);
@@ -70,16 +88,12 @@ impl Graph {
         &self.defs[id.0 as usize]
     }
     pub fn defs_in_file(&self, f: FileId) -> impl Iterator<Item = (DefId, &Def)> {
-        self.defs
+        self.file_defs[f.0 as usize]
             .iter()
-            .enumerate()
-            .filter(move |(_, d)| d.file == f)
-            .map(|(i, d)| (DefId(i as u32), d))
+            .map(move |&id| (id, self.def(id)))
     }
     pub fn module_init(&self, f: FileId) -> Option<DefId> {
-        self.defs_in_file(f)
-            .find(|(_, d)| d.kind == DefKind::ModuleInit)
-            .map(|(i, _)| i)
+        self.module_inits[f.0 as usize]
     }
 }
 

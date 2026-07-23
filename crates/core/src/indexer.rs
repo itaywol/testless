@@ -132,6 +132,24 @@ pub fn index_repo_incremental(
     // `seen` dedups repeated imports of the same target from the same file
     // (e.g. a type-only import alongside a value import of the same
     // module) down to a single `Imports` edge.
+    // Built once so exact-path and Go dir-fanout import resolution are O(1)
+    // hashmap lookups instead of an O(files) scan per import.
+    let path_to_file: HashMap<PathBuf, FileId> = graph
+        .files
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.path.clone(), FileId(i as u32)))
+        .collect();
+    let mut dir_to_files: HashMap<PathBuf, Vec<FileId>> = HashMap::new();
+    for (i, f) in graph.files.iter().enumerate() {
+        if let Some(parent) = f.path.parent() {
+            dir_to_files
+                .entry(parent.to_path_buf())
+                .or_default()
+                .push(FileId(i as u32));
+        }
+    }
+
     let mut seen: HashSet<(FileId, FileId)> = HashSet::new();
     for (file_id, ((rel_path, lang), extraction)) in
         files.iter().zip(extractions.iter()).enumerate()
@@ -142,8 +160,7 @@ pub fn index_repo_incremental(
                 continue;
             };
 
-            if let Some(target_id) = graph.files.iter().position(|f| f.path == resolved) {
-                let target_id = FileId(target_id as u32);
+            if let Some(&target_id) = path_to_file.get(&resolved) {
                 if target_id != file_id && seen.insert((file_id, target_id)) {
                     graph.add_edge(Edge::Imports {
                         from: file_id,
@@ -153,22 +170,14 @@ pub fn index_repo_incremental(
                 continue;
             }
 
-            let dir_targets: Vec<FileId> = graph
-                .files
-                .iter()
-                .enumerate()
-                .filter(|(target_id, f)| {
-                    f.path.parent() == Some(resolved.as_path())
-                        && FileId(*target_id as u32) != file_id
-                })
-                .map(|(target_id, _)| FileId(target_id as u32))
-                .collect();
-            for target_id in dir_targets {
-                if seen.insert((file_id, target_id)) {
-                    graph.add_edge(Edge::Imports {
-                        from: file_id,
-                        to: target_id,
-                    });
+            if let Some(targets) = dir_to_files.get(&resolved) {
+                for &target_id in targets {
+                    if target_id != file_id && seen.insert((file_id, target_id)) {
+                        graph.add_edge(Edge::Imports {
+                            from: file_id,
+                            to: target_id,
+                        });
+                    }
                 }
             }
         }
@@ -189,14 +198,19 @@ pub fn index_repo_incremental(
         imports_of.entry(*from).or_default().push(*to);
     }
 
-    let mut by_short_name: HashMap<(FileId, String), Vec<DefId>> = HashMap::new();
+    // Keyed by file first, then short name — lets `candidates_for` look up
+    // `by_short_name.get(f).and_then(|m| m.get(name))` with a borrowed
+    // `&str` instead of allocating a `String` per lookup per scope file.
+    let mut by_short_name: HashMap<FileId, HashMap<String, Vec<DefId>>> = HashMap::new();
     for (i, def) in graph.defs.iter().enumerate() {
         if def.kind == crate::graph::DefKind::ModuleInit {
             continue;
         }
         let short = def.name.rsplit('.').next().unwrap_or(&def.name).to_string();
         by_short_name
-            .entry((def.file, short))
+            .entry(def.file)
+            .or_default()
+            .entry(short)
             .or_default()
             .push(DefId(i as u32));
     }
@@ -216,7 +230,7 @@ pub fn index_repo_incremental(
         let candidates_for = |name: &str| -> Vec<DefId> {
             scope
                 .iter()
-                .filter_map(|f| by_short_name.get(&(*f, name.to_string())))
+                .filter_map(|f| by_short_name.get(f).and_then(|m| m.get(name)))
                 .flatten()
                 .copied()
                 .collect()
