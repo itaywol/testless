@@ -29,23 +29,28 @@ impl Language for GoLanguage {
         // file (covers package-level vars and any `init()` functions, which
         // are folded into this rather than getting their own def).
         //
-        // Note: the skip closure below marks every top-level
-        // `function_declaration` as "has its own def", per the language-wide
-        // convention (functions/methods/imports are hashed by their own def,
-        // package-level vars/consts are loose code that stays IN the module
-        // hash). `init()` is the one exception: it contributes no separate
-        // def (see `handle_function_declaration`), so its body is *not*
-        // otherwise covered by any def hash, yet this closure still skips it
-        // as a `function_declaration`. A change confined entirely to an
-        // `init()` body is therefore invisible to `diff_defs` — an accepted
-        // gap (rare in practice; `init()` bodies are typically small
-        // registration code) rather than special-casing the skip closure
-        // per-function-name.
-        let module_init_skip = |n: &tree_sitter::Node| {
-            matches!(
-                n.kind(),
-                "function_declaration" | "method_declaration" | "import_declaration"
-            )
+        // The skip closure marks a top-level `function_declaration`/
+        // `method_declaration`/`import_declaration` as "has its own def (or
+        // is an import)", per the language-wide convention (package-level
+        // vars/consts are loose code that stays IN the module hash).
+        // `init()` is the one exception to "every function gets its own
+        // def": it contributes no separate def (see
+        // `handle_function_declaration`), so if its `function_declaration`
+        // node were skipped like any other, its body would be covered by
+        // *no* hash anywhere — a real under-approximation (a change confined
+        // to `init()`'s body would select zero tests). So `init` is
+        // deliberately carved out of the skip: its node's kind is still
+        // `function_declaration`, but the closure checks the name field text
+        // and only skips *other* functions, letting `init`'s body hash into
+        // `<module>` instead.
+        let module_init_skip = |n: &tree_sitter::Node| match n.kind() {
+            "function_declaration" => {
+                n.child_by_field_name("name")
+                    .and_then(|name| name.utf8_text(src_bytes).ok())
+                    != Some("init")
+            }
+            "method_declaration" | "import_declaration" => true,
+            _ => false,
         };
         defs.push(ExtractedDef {
             name: "<module>".to_string(),
