@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.3.0](https://github.com/itaywol/testless/compare/testless-v0.2.0...testless-v0.3.0) (2026-07-23)
+
+
+### Features
+
+* **cli:** call/read edge counts in index and stats output ([54b0cd4](https://github.com/itaywol/testless/commit/54b0cd4d58bafbf5fbe1c2af822c7052bf9c707e))
+* **core:** tier-1 call/read resolution with unknown widening markers ([980b560](https://github.com/itaywol/testless/commit/980b560047a76da0a142aa0bc910523bf60d5c52))
+
+
+### Bug Fixes
+
+* **core:** widen self-only-candidate call refs to Unknown instead of dropping ([80919fd](https://github.com/itaywol/testless/commit/80919fdb3621217843eab04f29a17df16d486303))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * testless-core bumped from 0.2.0 to 0.3.0
+    * testless-lang-ts bumped from 0.2.0 to 0.3.0
+    * testless-lang-go bumped from 0.2.0 to 0.3.0
+    * testless-lang-rust bumped from 0.2.0 to 0.3.0
+
 ## [0.2.0](https://github.com/itaywol/testless/compare/testless-v0.1.0...testless-v0.2.0) (2026-07-23)
 
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0](https://github.com/itaywol/testless/compare/testless-lang-go-v0.2.0...testless-lang-go-v0.3.0) (2026-07-23)
+
+
+### Features
+
+* **core:** extraction model carries call/read references ([6339e65](https://github.com/itaywol/testless/commit/6339e6514c6a0c473e39033b646eb0fd6c9b0ce5))
+* **lang-go:** call/read extraction; narrow t.Run to testing receivers ([ef583cc](https://github.com/itaywol/testless/commit/ef583cc120fd34101c90dd6a4ad825a80446a4de))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * testless-core bumped from 0.2.0 to 0.3.0
+
 ## [0.2.0](https://github.com/itaywol/testless/compare/testless-lang-go-v0.1.0...testless-lang-go-v0.2.0) (2026-07-23)
 
 

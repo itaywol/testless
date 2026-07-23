@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.0](https://github.com/itaywol/testless/compare/testless-core-v0.2.0...testless-core-v0.3.0) (2026-07-23)
+
+
+### Features
+
+* **core:** extraction model carries call/read references ([6339e65](https://github.com/itaywol/testless/commit/6339e6514c6a0c473e39033b646eb0fd6c9b0ce5))
+* **core:** tier-1 call/read resolution with unknown widening markers ([980b560](https://github.com/itaywol/testless/commit/980b560047a76da0a142aa0bc910523bf60d5c52))
+
+
+### Bug Fixes
+
+* **core:** widen self-only-candidate call refs to Unknown instead of dropping ([80919fd](https://github.com/itaywol/testless/commit/80919fdb3621217843eab04f29a17df16d486303))
+
+
+### Performance Improvements
+
+* **core:** O(1) module_init and hashed file/name lookups ([c636af1](https://github.com/itaywol/testless/commit/c636af181b691cd7331395a7e7368dc16126ce8e))
+
 ## [0.2.0](https://github.com/itaywol/testless/compare/testless-core-v0.1.0...testless-core-v0.2.0) (2026-07-23)
 
 
