@@ -2,6 +2,7 @@ pub mod cache;
 pub mod diffdef;
 pub mod discover;
 pub mod fingerprint;
+pub mod gitio;
 pub mod graph;
 pub mod indexer;
 pub mod language;
