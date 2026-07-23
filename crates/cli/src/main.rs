@@ -40,15 +40,22 @@ fn registry() -> Registry {
     Registry::new(vec![
         Box::new(testless_lang_ts::TsLanguage),
         Box::new(testless_lang_go::GoLanguage),
+        Box::new(testless_lang_rust::RustLanguage),
     ])
 }
 
 fn cache_for(cwd: &std::path::Path) -> Cache {
-    Cache { root: cwd.join(".testless") }
+    Cache {
+        root: cwd.join(".testless"),
+    }
 }
 
 fn count_tests(graph: &Graph) -> usize {
-    graph.defs.iter().filter(|d| d.kind == DefKind::TestCase).count()
+    graph
+        .defs
+        .iter()
+        .filter(|d| d.kind == DefKind::TestCase)
+        .count()
 }
 
 fn cmd_index(full: bool) -> Result<()> {
@@ -77,7 +84,10 @@ fn cmd_index(full: bool) -> Result<()> {
 
     if std::io::stdout().is_terminal() {
         println!("Indexed {files} files: {defs} defs ({tests} tests)");
-        println!("  parsed: {}  reused: {}  time: {}ms", stats.parsed, stats.reused, ms);
+        println!(
+            "  parsed: {}  reused: {}  time: {}ms",
+            stats.parsed, stats.reused, ms
+        );
     } else {
         let out = serde_json::json!({
             "version": 1,
@@ -104,7 +114,9 @@ fn cmd_stats() -> Result<()> {
     let defs = graph.defs.len();
     let tests = count_tests(&graph);
     let edges = graph.edges.len();
-    let cache_bytes = std::fs::metadata(cache.file()).map(|m| m.len()).unwrap_or(0);
+    let cache_bytes = std::fs::metadata(cache.file())
+        .map(|m| m.len())
+        .unwrap_or(0);
 
     if std::io::stdout().is_terminal() {
         println!("Cache: {}", cache.root.display());
@@ -126,7 +138,12 @@ fn cmd_stats() -> Result<()> {
 }
 
 fn cmd_completion(shell: clap_complete::Shell) -> Result<()> {
-    clap_complete::generate(shell, &mut Cli::command(), "testless", &mut std::io::stdout());
+    clap_complete::generate(
+        shell,
+        &mut Cli::command(),
+        "testless",
+        &mut std::io::stdout(),
+    );
     Ok(())
 }
 

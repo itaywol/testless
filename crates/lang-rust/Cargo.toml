@@ -1,12 +1,12 @@
 [package]
-name = "testless-lang-go"
+name = "testless-lang-rust"
 version.workspace = true
 edition.workspace = true
-description = "Go language plugin for testless"
+description = "Rust language plugin for testless"
 repository.workspace = true
 license.workspace = true
 
 [dependencies]
 testless-core = { path = "../core", version = "0.1.0" }
 tree-sitter = "0.26.11"
-tree-sitter-go = "0.25.0"
+tree-sitter-rust = "0.24.2"

@@ -63,20 +63,31 @@ pub mod tests_support {
 
     pub struct Fake;
     impl Language for Fake {
-        fn id(&self) -> &'static str { "fake" }
-        fn extensions(&self) -> &'static [&'static str] { &["fk"] }
-        fn grammar(&self, _: &Path) -> tree_sitter::Language { unimplemented!() }
-        fn extract(&self, _: &str, _: &tree_sitter::Tree) -> Extraction {
-            Extraction { defs: vec![], imports: vec![] }
+        fn id(&self) -> &'static str {
+            "fake"
         }
-        fn resolve_import(&self, _: &Path, _: &str, _: &Path) -> Option<PathBuf> { None }
+        fn extensions(&self) -> &'static [&'static str] {
+            &["fk"]
+        }
+        fn grammar(&self, _: &Path) -> tree_sitter::Language {
+            unimplemented!()
+        }
+        fn extract(&self, _: &str, _: &tree_sitter::Tree) -> Extraction {
+            Extraction {
+                defs: vec![],
+                imports: vec![],
+            }
+        }
+        fn resolve_import(&self, _: &Path, _: &str, _: &Path) -> Option<PathBuf> {
+            None
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::tests_support::Fake;
+    use super::*;
     use std::path::Path;
 
     #[test]

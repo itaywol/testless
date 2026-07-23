@@ -62,14 +62,18 @@ mod tests {
     #[test]
     fn missing_cache_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
-        let cache = Cache { root: tmp.path().join(".testless") };
+        let cache = Cache {
+            root: tmp.path().join(".testless"),
+        };
         assert!(cache.load().is_none());
     }
 
     #[test]
     fn corrupt_cache_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
-        let cache = Cache { root: tmp.path().join(".testless") };
+        let cache = Cache {
+            root: tmp.path().join(".testless"),
+        };
         std::fs::create_dir_all(&cache.root).unwrap();
         std::fs::write(cache.root.join("graph.bin"), b"garbage").unwrap();
         assert!(cache.load().is_none());
@@ -78,9 +82,15 @@ mod tests {
     #[test]
     fn save_load_roundtrip() {
         let tmp = tempfile::tempdir().unwrap();
-        let cache = Cache { root: tmp.path().join(".testless") };
+        let cache = Cache {
+            root: tmp.path().join(".testless"),
+        };
         let mut g = Graph::default();
-        g.add_file(FileNode { path: "a.ts".into(), hash: [1; 32], lang: "ts".into() });
+        g.add_file(FileNode {
+            path: "a.ts".into(),
+            hash: [1; 32],
+            lang: "ts".into(),
+        });
         cache.save(&g, &[]).unwrap();
         let (loaded, extractions) = cache.load().unwrap();
         assert_eq!(loaded.files.len(), 1);
@@ -90,11 +100,15 @@ mod tests {
     #[test]
     fn wrong_magic_returns_none() {
         let tmp = tempfile::tempdir().unwrap();
-        let cache = Cache { root: tmp.path().join(".testless") };
+        let cache = Cache {
+            root: tmp.path().join(".testless"),
+        };
         std::fs::create_dir_all(&cache.root).unwrap();
         let g = Graph::default();
         let mut bytes = b"TST9".to_vec();
-        bytes.extend(bincode::serialize(&(g, Vec::<crate::cache::CachedExtraction>::new())).unwrap());
+        bytes.extend(
+            bincode::serialize(&(g, Vec::<crate::cache::CachedExtraction>::new())).unwrap(),
+        );
         std::fs::write(cache.root.join("graph.bin"), bytes).unwrap();
         assert!(cache.load().is_none());
     }
@@ -102,7 +116,9 @@ mod tests {
     #[test]
     fn save_creates_parent_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let cache = Cache { root: tmp.path().join(".testless") };
+        let cache = Cache {
+            root: tmp.path().join(".testless"),
+        };
         assert!(!cache.root.exists());
         cache.save(&Graph::default(), &[]).unwrap();
         assert!(cache.file().exists());
