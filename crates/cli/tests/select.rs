@@ -266,3 +266,44 @@ fn text_format_prints_file_and_name_lines() {
     let err = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
     assert!(err.contains("3"), "expected a summary footer, got {err:?}");
 }
+
+/// `--format args` prints `vitest run <file> -t "<pattern>"` lines on
+/// stdout — one per selected TS test — for the same body-edit scenario as
+/// the JSON/text tests above (Plan 4 Task 3).
+#[test]
+fn args_format_prints_vitest_run_lines() {
+    let tmp = init_repo();
+    let root = tmp.path();
+    std::fs::write(root.join("src/math.ts"), MATH_TS_BODY_EDITED).unwrap();
+
+    let assert = Command::cargo_bin("testless")
+        .unwrap()
+        .args(["select", "--format", "args"])
+        .current_dir(root)
+        .assert()
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let lines: Vec<&str> = out.lines().collect();
+
+    assert!(
+        lines.iter().all(|l| l.starts_with("vitest run")),
+        "expected only `vitest run` lines, got {out:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("math.test.ts") && l.contains("-t \"add > handles negatives\"")),
+        "got stdout: {out:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("format.test.ts") && l.contains("-t \"formats\"")),
+        "got stdout: {out:?}"
+    );
+    assert_eq!(
+        lines.len(),
+        3,
+        "expected exactly 3 command lines, got {out:?}"
+    );
+}

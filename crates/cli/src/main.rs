@@ -4,6 +4,8 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 
+mod format;
+
 use testless_core::cache::{Cache, CachedExtraction};
 use testless_core::classify::{classify, ChangeMode, SeedKind};
 use testless_core::gitio;
@@ -24,11 +26,15 @@ struct Cli {
 
 /// Output format for `select`. Defaults (when omitted) to `Json` on a piped
 /// stdout and `Text` on a terminal — the same TTY-sniffing convention as
-/// `index`/`stats`/`changes`.
-#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+/// `index`/`stats`/`changes`. `Args` is never a default: it must be asked
+/// for explicitly with `--format args`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 enum Format {
     Json,
     Text,
+    /// Runner-consumable command lines (`vitest run ...`, `go test ...`,
+    /// `cargo test ...`) — one per selected test, via `format::command_lines`.
+    Args,
 }
 
 #[derive(Subcommand)]
@@ -396,24 +402,34 @@ fn cmd_select(from: String, to: Option<String>, format: Option<Format>) -> Resul
     }
 
     let (graph, _extractions, mode, changed_count) = analyze(&from)?;
-    let text_mode = match format {
-        Some(Format::Json) => false,
-        Some(Format::Text) => true,
-        None => std::io::stdout().is_terminal(),
-    };
+    // `--format` always wins; omitted, it sniffs the TTY like `changes`
+    // does. `Args` is never the sniffed default — it must be requested.
+    let resolved_format = format.unwrap_or_else(|| {
+        if std::io::stdout().is_terminal() {
+            Format::Text
+        } else {
+            Format::Json
+        }
+    });
 
     let seeds = match mode {
         ChangeMode::Selection(seeds) => seeds,
         ChangeMode::RunAll { reason } => {
-            if text_mode {
-                println!("run all: {reason}");
-            } else {
-                let out = serde_json::json!({
-                    "version": 1,
-                    "mode": "run_all",
-                    "reason": reason,
-                });
-                println!("{out}");
+            match resolved_format {
+                Format::Text => println!("run all: {reason}"),
+                Format::Json => {
+                    let out = serde_json::json!({
+                        "version": 1,
+                        "mode": "run_all",
+                        "reason": reason,
+                    });
+                    println!("{out}");
+                }
+                // `args`'s stdout contract is "runner-consumable command
+                // lines, nothing else" — a run-all reason isn't one of
+                // those, so it goes to stderr instead, same as the
+                // selection footer below.
+                Format::Args => eprintln!("run all: {reason}"),
             }
             return Ok(2);
         }
@@ -440,42 +456,57 @@ fn cmd_select(from: String, to: Option<String>, format: Option<Format>) -> Resul
         })
         .collect();
 
-    if text_mode {
-        for t in &tests {
-            println!("{} :: {}", t.file.display(), t.name.join(" > "));
+    match resolved_format {
+        Format::Text => {
+            for t in &tests {
+                println!("{} :: {}", t.file.display(), t.name.join(" > "));
+            }
+            eprintln!(
+                "selected {}/{} tests ({} seeds, {} changed files)",
+                tests.len(),
+                total_known,
+                seed_count,
+                changed_count
+            );
         }
-        eprintln!(
-            "selected {}/{} tests ({} seeds, {} changed files)",
-            tests.len(),
-            total_known,
-            seed_count,
-            changed_count
-        );
-    } else {
-        let tests_json: Vec<_> = tests
-            .iter()
-            .map(|t| {
-                serde_json::json!({
-                    "file": t.file,
-                    "name": t.name,
-                    "runner": t.runner,
-                    "lang": t.lang,
-                    "computed": t.computed,
+        Format::Json => {
+            let tests_json: Vec<_> = tests
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "file": t.file,
+                        "name": t.name,
+                        "runner": t.runner,
+                        "lang": t.lang,
+                        "computed": t.computed,
+                    })
                 })
-            })
-            .collect();
-        let out = serde_json::json!({
-            "version": 1,
-            "mode": "selection",
-            "tests": tests_json,
-            "stats": {
-                "total_known": total_known,
-                "selected": tests.len(),
-                "seeds": seed_count,
-                "changed_files": changed_count,
-            },
-        });
-        println!("{out}");
+                .collect();
+            let out = serde_json::json!({
+                "version": 1,
+                "mode": "selection",
+                "tests": tests_json,
+                "stats": {
+                    "total_known": total_known,
+                    "selected": tests.len(),
+                    "seeds": seed_count,
+                    "changed_files": changed_count,
+                },
+            });
+            println!("{out}");
+        }
+        Format::Args => {
+            for line in format::command_lines(&tests) {
+                println!("{line}");
+            }
+            eprintln!(
+                "selected {}/{} tests ({} seeds, {} changed files)",
+                tests.len(),
+                total_known,
+                seed_count,
+                changed_count
+            );
+        }
     }
 
     Ok(0)
