@@ -105,3 +105,70 @@ fn resolves_module_internal_imports() {
         None
     );
 }
+
+/// The ModuleInit `<module>` def's `sig_hash` (there is always exactly one).
+fn module_init_sig_hash(ex: &testless_core::Extraction) -> [u8; 32] {
+    ex.defs
+        .iter()
+        .find(|d| d.kind == DefKind::ModuleInit)
+        .expect("ModuleInit def")
+        .sig_hash
+}
+
+#[test]
+fn init_body_change_moves_module_init_hash() {
+    // `init()` contributes no def of its own (folded into ModuleInit per
+    // extract's doc comment) — so a change confined entirely to its body
+    // must still show up in the ModuleInit sig_hash, or such a change would
+    // select zero tests on re-index.
+    let a = extract(
+        r#"package p
+
+func Add(a, b int) int { return a + b }
+
+func init() { _ = Add(0, 0) }
+"#,
+    );
+    let b = extract(
+        r#"package p
+
+func Add(a, b int) int { return a + b }
+
+func init() { _ = Add(1, 1) }
+"#,
+    );
+    assert_ne!(
+        module_init_sig_hash(&a),
+        module_init_sig_hash(&b),
+        "init() body change must change the ModuleInit sig_hash"
+    );
+}
+
+#[test]
+fn normal_function_body_change_does_not_move_module_init_hash() {
+    // A change confined to an ordinary top-level function's body is already
+    // covered by that function's own def hash — it must NOT also move the
+    // ModuleInit hash (that def's own body is excluded from the module
+    // hash, same as every other non-`init` function).
+    let a = extract(
+        r#"package p
+
+func Add(a, b int) int { return a + b }
+
+func init() {}
+"#,
+    );
+    let b = extract(
+        r#"package p
+
+func Add(a, b int) int { return a - b }
+
+func init() {}
+"#,
+    );
+    assert_eq!(
+        module_init_sig_hash(&a),
+        module_init_sig_hash(&b),
+        "a normal function's body change must not affect the ModuleInit sig_hash"
+    );
+}

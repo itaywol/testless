@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
+use testless_core::fingerprint::{module_init_fingerprint, split_fingerprint};
 use testless_core::{DefKind, ExtractedDef, ExtractedRef, Extraction, ImportRef, Language};
 use tree_sitter::Node;
 
@@ -24,9 +25,59 @@ impl Language for TsLanguage {
 
     fn extract(&self, src: &str, tree: &tree_sitter::Tree) -> Extraction {
         let root = tree.root_node();
+        let src_bytes = src.as_bytes();
         let mut defs = Vec::new();
 
-        // Always-present module-level def, spanning the whole file.
+        // Always-present module-level def, spanning the whole file. Its
+        // sig_hash covers only the "loose" top-level code: statements that
+        // aren't themselves consumed as defs/imports by `walk_top_level`
+        // below. Content-aware (unlike lang-go/lang-rust's plain node-kind
+        // match) because TS wraps every exported declaration in one
+        // `export_statement` node, so a kind-only skip can't tell "exports a
+        // def" from "exports loose code" the way a bare top-level
+        // `function_declaration` vs `lexical_declaration` can:
+        //   - bare `function_declaration`/`class_declaration` -> skip (own
+        //     def hash covers it); bare `import_statement` -> skip.
+        //   - `export_statement` -> look at its `declaration` field child:
+        //     - wraps a `function_declaration`/`class_declaration` -> skip
+        //       (same reasoning as the bare case; keeps exported-def body
+        //       edits from spuriously dirtying `<module>`).
+        //     - wraps a `lexical_declaration` -> defer to the lexical rule
+        //       below on that child.
+        //     - no `declaration` child at all (`export default <expr>`,
+        //       `export * from "..."`, `export { x }`, `export { x } from
+        //       "..."`, and — a tree-sitter-typescript quirk — an
+        //       *anonymous* `export default function () {}`/`class {}`) ->
+        //       don't skip: this is either loose code or a re-export, and
+        //       either way nothing else hashes it.
+        //   - `lexical_declaration` (bare, or reached via the export case
+        //     above) -> skip iff EVERY declarator's value is an
+        //     arrow/function expression (i.e. every declarator already
+        //     became its own `Function` def via `walk_top_level` below).
+        //     `export const CONFIG = makeConfig(1)` has a non-function value
+        //     -> never skipped, so a value edit (invisible before this fix)
+        //     now dirties `<module>`. A single-declarator arrow/function
+        //     const IS skipped, keeping its body edits precise (covered only
+        //     by its own def's hash, same as a bare function declaration). A
+        //     mixed statement (`const a = 1, b = () => {}`) is NOT skipped —
+        //     accepted widening, since `b`'s own def hash already covers its
+        //     body precisely and the extra `<module>` dirtying only adds a
+        //     seed, never hides one.
+        let module_init_skip = |n: &tree_sitter::Node| -> bool {
+            match n.kind() {
+                "function_declaration" | "class_declaration" | "import_statement" => true,
+                "export_statement" => match n.child_by_field_name("declaration") {
+                    Some(decl) => match decl.kind() {
+                        "function_declaration" | "class_declaration" => true,
+                        "lexical_declaration" => lexical_all_fn_valued(decl),
+                        _ => false,
+                    },
+                    None => false,
+                },
+                "lexical_declaration" => lexical_all_fn_valued(*n),
+                _ => false,
+            }
+        };
         defs.push(ExtractedDef {
             name: "<module>".to_string(),
             kind: DefKind::ModuleInit,
@@ -35,6 +86,8 @@ impl Language for TsLanguage {
             test_id: None,
             computed_name: false,
             parent: None,
+            sig_hash: module_init_fingerprint(root, src_bytes, &module_init_skip),
+            body_hash: None,
         });
 
         // `scope_of` maps the AST node id that *is* a def's body/span (a
@@ -49,7 +102,6 @@ impl Language for TsLanguage {
         // add } from "./math"` doesn't itself count as a read of `add`).
         let mut def_name_ids: HashSet<usize> = HashSet::new();
 
-        let src_bytes = src.as_bytes();
         let mut cursor = root.walk();
         for child in root.children(&mut cursor) {
             walk_top_level(
@@ -126,6 +178,33 @@ impl Language for TsLanguage {
 
         candidates.into_iter().find(|c| repo_root.join(c).exists())
     }
+}
+
+/// Whether every `variable_declarator` in a `lexical_declaration` (`const`/
+/// `let`) has an arrow-function or function-expression value — i.e. every
+/// declarator is already captured as its own `Function` def by
+/// `walk_top_level`'s `lexical_declaration` handling, so the whole statement
+/// is safe to exclude from the module-init hash without hiding a change.
+/// `false` for a statement with zero declarators (shouldn't occur, but never
+/// worth skipping something that could hide a real edit) or any non-function
+/// value (`export const CONFIG = makeConfig(1)`, a mixed `const a = 1, b =
+/// () => {}`, etc).
+fn lexical_all_fn_valued(node: Node) -> bool {
+    let mut cursor = node.walk();
+    let mut saw_declarator = false;
+    for child in node.children(&mut cursor) {
+        if child.kind() != "variable_declarator" {
+            continue;
+        }
+        saw_declarator = true;
+        let is_fn_valued = child
+            .child_by_field_name("value")
+            .is_some_and(|v| matches!(v.kind(), "arrow_function" | "function_expression"));
+        if !is_fn_valued {
+            return false;
+        }
+    }
+    saw_declarator
 }
 
 /// Lexically collapse `.` and `..` components (no filesystem access), so
@@ -519,6 +598,14 @@ fn walk_tests(
                         .take_while(|(_, computed)| !*computed)
                         .map(|(name, _)| name.clone())
                         .collect();
+                    // The node is the whole `it`/`test` call_expression, which
+                    // has no `body` field — split_fingerprint's sig_hash thus
+                    // covers the entire call (name + callback tokens) and
+                    // body_hash is always None. A change anywhere inside the
+                    // test (title or body) therefore surfaces as SigChanged,
+                    // never BodyChanged; that's fine here, either way the
+                    // test itself gets reseeded.
+                    let (sig_hash, body_hash) = split_fingerprint(node, src);
                     defs.push(ExtractedDef {
                         name: full.last().unwrap().0.clone(),
                         kind: DefKind::TestCase,
@@ -527,6 +614,8 @@ fn walk_tests(
                         test_id: Some(test_id),
                         computed_name,
                         parent: None,
+                        sig_hash,
+                        body_hash,
                     });
                     // The whole `it`/`test` call (including the curried outer
                     // span for `.each` forms) is this TestCase's enclosing
@@ -601,6 +690,15 @@ fn walk_top_level(
                     continue;
                 }
                 if let Some(name) = declarator.child_by_field_name("name") {
+                    // `push_def`'s span is `node` (the whole
+                    // `lexical_declaration`/`variable_declaration`
+                    // statement), which has no `body` field itself — so
+                    // sig_hash covers the entire statement (keyword, name,
+                    // arrow/function value, semicolon) and body_hash is
+                    // always None here. Same accepted limitation as
+                    // TestCase's call-expression node below: any change to
+                    // an arrow/function-expression const's body surfaces as
+                    // SigChanged rather than BodyChanged.
                     let idx = push_def(node, name, DefKind::Function, src, defs, parent);
                     // The def's enclosing scope for the refs pass is the
                     // function/arrow value itself (not the whole
@@ -644,6 +742,7 @@ fn push_def(
     parent: Option<usize>,
 ) -> usize {
     let name = name_node.utf8_text(src).unwrap_or_default().to_string();
+    let (sig_hash, body_hash) = split_fingerprint(span, src);
     defs.push(ExtractedDef {
         name,
         kind,
@@ -652,6 +751,8 @@ fn push_def(
         test_id: None,
         computed_name: false,
         parent,
+        sig_hash,
+        body_hash,
     });
     defs.len() - 1
 }

@@ -22,7 +22,7 @@ skips a test that could fail.
 | Index: function-level graph of defs, tests, imports, calls/reads | ✅ |
 | Incremental re-index (content-hash gated cache) | ✅ |
 | Languages: TypeScript/JavaScript, Go, Rust | ✅ |
-| Change detection (structural AST diff) | 🚧 |
+| Change detection (structural AST diff) | ✅ |
 | Impact walk + `select` (the point of the tool) | 🚧 |
 | SCIP-sharpened call resolution | planned |
 

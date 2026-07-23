@@ -5,6 +5,8 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 
 use testless_core::cache::Cache;
+use testless_core::classify::{classify, ChangeMode, SeedKind};
+use testless_core::gitio;
 use testless_core::graph::{CallTarget, DefKind, Edge, Graph};
 use testless_core::indexer::index_repo_incremental;
 use testless_core::Registry;
@@ -12,7 +14,7 @@ use testless_core::Registry;
 #[derive(Parser)]
 #[command(
     name = "testless",
-    after_help = "Examples:\n  testless index\n  testless stats\n  testless completion zsh > _testless"
+    after_help = "Examples:\n  testless index\n  testless stats\n  testless changes --from origin/main\n  testless completion zsh > _testless"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -29,6 +31,17 @@ enum Cmd {
     },
     /// Print counts from the existing cache.
     Stats,
+    /// Classify what changed since `--from` into impacted-def seeds (or a
+    /// run-all fallback) and print them.
+    Changes {
+        /// Revision to diff from. Compared against the current worktree.
+        #[arg(long, default_value = "HEAD")]
+        from: String,
+        /// Revision to diff to. Not yet supported — v1 always compares
+        /// `--from` against the worktree.
+        #[arg(long)]
+        to: Option<String>,
+    },
     /// Generate a shell completion script and print it to stdout.
     Completion {
         /// Shell to generate completions for (bash, zsh, fish, elvish, powershell).
@@ -182,6 +195,125 @@ fn cmd_stats() -> Result<()> {
     Ok(())
 }
 
+/// Machine-readable label for a `SeedKind`, matching the wire format
+/// documented for `testless changes` (lowercase, snake_case for
+/// `ModuleInit`) — deliberately not `SeedKind`'s own `Serialize` (which
+/// would emit PascalCase variant names).
+fn seed_kind_label(kind: SeedKind) -> &'static str {
+    match kind {
+        SeedKind::Body => "body",
+        SeedKind::Signature => "signature",
+        SeedKind::Added => "added",
+        SeedKind::ModuleInit => "module_init",
+    }
+}
+
+/// `--from <rev>` diffed against the current worktree, classified into
+/// impact seeds (or a run-all fallback). Returns the process exit code: 0
+/// for a selection (including an empty one), 2 for run-all. Failure to list
+/// changed files (bad rev, `git` missing, an unrecognized git status token)
+/// degrades to a run-all fallback (exit 2) rather than a hard error — see
+/// Item 2. Exit 1 stays reserved for index/cache infrastructure failures
+/// (indexing the repo, saving the cache), which are still surfaced as `Err`
+/// so `main` reports them.
+fn cmd_changes(from: String, to: Option<String>) -> Result<i32> {
+    if to.is_some() {
+        anyhow::bail!("--to is not yet supported (v1 only diffs --from against the worktree)");
+    }
+
+    let cwd = std::env::current_dir().context("getting current directory")?;
+    let reg = registry();
+    let cache = cache_for(&cwd);
+    let prev = cache.load();
+
+    let (graph, extractions, _stats) =
+        index_repo_incremental(&cwd, &reg, prev).context("indexing repo")?;
+
+    // `changed_files`/`classify` run against the on-disk worktree before the
+    // cache is (re)written: saving first would leave a freshly-created (or
+    // freshly-modified) `.testless/graph.bin` sitting in the worktree, which
+    // `git ls-files --others` would then report as an untracked "changed"
+    // file in any repo that hasn't gitignored `.testless/` yet — polluting
+    // both the `changed_files` stat and (harmlessly, but wastefully) the
+    // importer scan.
+    let (mode, changed_count) = match gitio::changed_files(&cwd, &from, None) {
+        Ok(changed) => {
+            let mode = classify(&cwd, &graph, &reg, &changed, &extractions, &|p| {
+                gitio::show_file(&cwd, &from, p)
+            });
+            (mode, changed.len())
+        }
+        Err(err) => {
+            let reason = format!("listing files changed since --from: {err:#}");
+            (ChangeMode::RunAll { reason }, 0)
+        }
+    };
+
+    cache.save(&graph, &extractions).context("saving cache")?;
+
+    let exit_code = match &mode {
+        ChangeMode::Selection(_) => 0,
+        ChangeMode::RunAll { .. } => 2,
+    };
+
+    if std::io::stdout().is_terminal() {
+        match &mode {
+            ChangeMode::Selection(seeds) if seeds.is_empty() => {
+                println!("no impacted defs");
+            }
+            ChangeMode::Selection(seeds) => {
+                for seed in seeds {
+                    let def = graph.def(seed.def);
+                    let file = &graph.files[def.file.0 as usize].path;
+                    println!(
+                        "{} :: {} [{}]",
+                        file.display(),
+                        def.name,
+                        seed_kind_label(seed.kind)
+                    );
+                }
+            }
+            ChangeMode::RunAll { reason } => {
+                println!("run all: {reason}");
+            }
+        }
+    } else {
+        let out = match &mode {
+            ChangeMode::Selection(seeds) => {
+                let seeds_json: Vec<_> = seeds
+                    .iter()
+                    .map(|seed| {
+                        let def = graph.def(seed.def);
+                        let file = &graph.files[def.file.0 as usize].path;
+                        serde_json::json!({
+                            "def": def.name,
+                            "file": file,
+                            "kind": seed_kind_label(seed.kind),
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "version": 1,
+                    "mode": "selection",
+                    "seeds": seeds_json,
+                    "stats": {
+                        "changed_files": changed_count,
+                        "seeds": seeds.len(),
+                    },
+                })
+            }
+            ChangeMode::RunAll { reason } => serde_json::json!({
+                "version": 1,
+                "mode": "run_all",
+                "reason": reason,
+            }),
+        };
+        println!("{out}");
+    }
+
+    Ok(exit_code)
+}
+
 fn cmd_completion(shell: clap_complete::Shell) -> Result<()> {
     clap_complete::generate(
         shell,
@@ -195,16 +327,24 @@ fn cmd_completion(shell: clap_complete::Shell) -> Result<()> {
 fn main() {
     let cli = Cli::parse();
     let result = match cli.cmd {
-        Cmd::Index { full } => cmd_index(full),
-        Cmd::Stats => cmd_stats(),
-        Cmd::Completion { shell } => cmd_completion(shell),
+        Cmd::Index { full } => cmd_index(full).map(|()| 0),
+        Cmd::Stats => cmd_stats().map(|()| 0),
+        Cmd::Changes { from, to } => cmd_changes(from, to),
+        Cmd::Completion { shell } => cmd_completion(shell).map(|()| 0),
     };
 
-    if let Err(err) = result {
-        eprintln!("error: {err}");
-        for cause in err.chain().skip(1) {
-            eprintln!("  caused by: {cause}");
+    match result {
+        Ok(code) => {
+            if code != 0 {
+                std::process::exit(code);
+            }
         }
-        std::process::exit(1);
+        Err(err) => {
+            eprintln!("error: {err}");
+            for cause in err.chain().skip(1) {
+                eprintln!("  caused by: {cause}");
+            }
+            std::process::exit(1);
+        }
     }
 }

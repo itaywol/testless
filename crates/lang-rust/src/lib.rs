@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use testless_core::fingerprint::{module_init_fingerprint, split_fingerprint};
 use testless_core::{DefKind, ExtractedDef, ExtractedRef, Extraction, ImportRef, Language};
 use tree_sitter::Node;
 
@@ -25,7 +26,22 @@ impl Language for RustLanguage {
         let mut defs = Vec::new();
 
         // One ModuleInit `<module>` per file, always, spanning the whole
-        // file.
+        // file. Consts/statics stay OUT of the skip set (loose top-level
+        // code correctly stays IN the module hash); struct/enum/trait/mod
+        // items and `use` declarations are covered by their own def hash (or
+        // are imports), same as functions/impls.
+        let module_init_skip = |n: &tree_sitter::Node| {
+            matches!(
+                n.kind(),
+                "function_item"
+                    | "impl_item"
+                    | "struct_item"
+                    | "enum_item"
+                    | "trait_item"
+                    | "mod_item"
+                    | "use_declaration"
+            )
+        };
         defs.push(ExtractedDef {
             name: "<module>".to_string(),
             kind: DefKind::ModuleInit,
@@ -34,6 +50,8 @@ impl Language for RustLanguage {
             test_id: None,
             computed_name: false,
             parent: None,
+            sig_hash: module_init_fingerprint(root, src_bytes, &module_init_skip),
+            body_hash: None,
         });
 
         // `scope_of` maps the AST node id that *is* a def's own span (a
@@ -278,9 +296,9 @@ fn handle_function_item(
     let idx = if attrs.iter().any(|attr| is_test_attribute(*attr, src)) {
         let mut test_id = mod_stack.to_vec();
         test_id.push(name.to_string());
-        push_test_def(node, name.to_string(), test_id, defs)
+        push_test_def(node, name.to_string(), test_id, src, defs)
     } else {
-        push_def(node, name.to_string(), DefKind::Function, defs)
+        push_def(node, name.to_string(), DefKind::Function, src, defs)
     };
     scope_of.insert(node.id(), idx);
     def_name_ids.insert(name_node.id());
@@ -321,7 +339,7 @@ fn handle_type_item(
     let Ok(name) = name_node.utf8_text(src) else {
         return;
     };
-    push_def(node, name.to_string(), DefKind::Class, defs);
+    push_def(node, name.to_string(), DefKind::Class, src, defs);
     def_name_ids.insert(name_node.id());
 }
 
@@ -358,7 +376,7 @@ fn handle_impl_item(
                 continue;
             };
             let full_name = format!("{type_name}.{method_name}");
-            let idx = push_def(child, full_name, DefKind::Method, defs);
+            let idx = push_def(child, full_name, DefKind::Method, src, defs);
             scope_of.insert(child.id(), idx);
             def_name_ids.insert(name_node.id());
         }
@@ -425,7 +443,14 @@ fn strip_generics(type_text: &str) -> &str {
     }
 }
 
-fn push_def(span: Node, name: String, kind: DefKind, defs: &mut Vec<ExtractedDef>) -> usize {
+fn push_def(
+    span: Node,
+    name: String,
+    kind: DefKind,
+    src: &[u8],
+    defs: &mut Vec<ExtractedDef>,
+) -> usize {
+    let (sig_hash, body_hash) = split_fingerprint(span, src);
     defs.push(ExtractedDef {
         name,
         kind,
@@ -434,6 +459,8 @@ fn push_def(span: Node, name: String, kind: DefKind, defs: &mut Vec<ExtractedDef
         test_id: None,
         computed_name: false,
         parent: None,
+        sig_hash,
+        body_hash,
     });
     defs.len() - 1
 }
@@ -442,8 +469,10 @@ fn push_test_def(
     span: Node,
     name: String,
     test_id: Vec<String>,
+    src: &[u8],
     defs: &mut Vec<ExtractedDef>,
 ) -> usize {
+    let (sig_hash, body_hash) = split_fingerprint(span, src);
     defs.push(ExtractedDef {
         name,
         kind: DefKind::TestCase,
@@ -452,6 +481,8 @@ fn push_test_def(
         test_id: Some(test_id),
         computed_name: false,
         parent: None,
+        sig_hash,
+        body_hash,
     });
     defs.len() - 1
 }

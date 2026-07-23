@@ -50,3 +50,5 @@ jobs:
         run: ./target/release/testless index | jq -e '.parsed == 0'
       - name: Stats
         run: ./target/release/testless stats | jq -e '.tests > 0'
+      - name: Changes (clean tree = empty selection)
+        run: ./target/release/testless changes --from HEAD | jq -e '.mode == "selection" and (.seeds | length) == 0'
