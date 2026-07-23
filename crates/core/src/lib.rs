@@ -7,6 +7,7 @@ pub mod gitio;
 pub mod graph;
 pub mod indexer;
 pub mod language;
+pub mod walk;
 pub use diffdef::*;
 pub use graph::*;
 pub use language::*;
