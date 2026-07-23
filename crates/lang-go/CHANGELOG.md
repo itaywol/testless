@@ -1,0 +1,23 @@
+# Changelog
+
+## [0.2.0](https://github.com/itaywol/testless/compare/testless-lang-go-v0.1.0...testless-lang-go-v0.2.0) (2026-07-23)
+
+
+### Features
+
+* **lang-go:** extraction and module-internal import resolution ([6d5ff4a](https://github.com/itaywol/testless/commit/6d5ff4a630b903d2751992c05cf450de85505090))
+
+
+### Bug Fixes
+
+* explicit crate versions for release-please cargo-workspace plugin ([b6f206d](https://github.com/itaywol/testless/commit/b6f206d3636cf232c0af9d18c034c268d7372986))
+* final-review batch — self-edge guard, cache version magic, test gaps ([a675735](https://github.com/itaywol/testless/commit/a675735f6a713d8bc7a48e1da70d889aa971d464))
+* **lang-go:** thread enclosing subtest context through nested t.Run chains ([d1b8a71](https://github.com/itaywol/testless/commit/d1b8a71d9656030a7ff9da23620d67e5590b6974))
+* publishable crate versions, strict publish loop, review nits ([01b86d9](https://github.com/itaywol/testless/commit/01b86d9fce3d20ba0da79417587b4469da005964))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * testless-core bumped from 0.1.0 to 0.2.0
