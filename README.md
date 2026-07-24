@@ -26,8 +26,8 @@ changes structurally (comments and formatting are free), and walks the graph to
 find every test a change could break. It prints your runner's own CLI
 invocations, ready to execute.
 
-**Selection is always a superset of the truly impacted tests.** When static
-analysis cannot resolve something, testless widens instead of guessing.
+**Selection is always a superset of the truly impacted tests.** testless
+widens instead of guessing, and never silently skips a test that could fail.
 
 ## Install
 

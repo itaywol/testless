@@ -25,8 +25,8 @@ const repo = "https://github.com/itaywol/testless";
           <p class="proof-line">Run 5 tests instead of 500.</p>
           <p class="subline">
             testless statically analyzes your code down to the function
-            level, so it picks exactly the tests a change could break instead
-            of running the whole suite.
+            level and picks exactly the tests a change could break. It reads
+            your code, not your coverage.
           </p>
           <div class="hero-actions">
             <a class="btn btn-primary" href="#install">Get started</a>
@@ -77,7 +77,7 @@ const repo = "https://github.com/itaywol/testless";
             />
           </div>
           <div class="demo-caption">
-            <p>testless indexes the repo into a graph of defs, tests, and imports.</p>
+            <p>testless indexes the repo into a graph of functions, tests, and imports.</p>
             <p>A changed function is diffed structurally, comments and formatting are free.</p>
             <p>The reverse impact walk prints only the tests that could break, ready to run.</p>
           </div>
@@ -115,8 +115,9 @@ const repo = "https://github.com/itaywol/testless";
             </div>
           </div>
           <p class="guarantee">
-            The selected set is always a superset of the truly impacted
-            tests. testless never silently skips a test that could fail.
+            Selection is always a superset of the truly impacted tests.
+            testless widens instead of guessing, and never silently skips a
+            test that could fail.
           </p>
         </div>
       </section>
