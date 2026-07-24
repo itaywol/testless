@@ -51,7 +51,7 @@ testless widens the selection rather than risk skipping a test that could fail.
 
 | Language | Test runners | |
 |---|---|---|
-| TypeScript / JavaScript | vitest, jest | ✅ |
+| TypeScript / JavaScript | vitest (`--format args`), jest via `-t` patterns | ✅ |
 | Go | go test | ✅ |
 | Rust | cargo test | ✅ |
 
