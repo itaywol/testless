@@ -1,9 +1,5 @@
-# testless demo. Regenerate:
-#   1. cargo build --release -p testless
-#   2. demo repo at /tmp/demo: src/{math,format,greet}.ts + matching *.test.ts
-#      (fmt calls add; greet unrelated), .gitignore with ".testless/", git committed
-#   3. JetBrains Mono visible to fontconfig (XDG_DATA_HOME with fonts/)
-#   4. cd /tmp/demo && PATH=.../target/release:$PATH vhs this-file
+# testless demo. Regenerate: see assets/demo.tape history; demo repo at /tmp/demo
+# with the one-line change ALREADY applied to src/math.ts before recording.
 
 Output "/home/itay/Work/testless/assets/demo.gif"
 
@@ -24,20 +20,16 @@ Hide
 Type `export PS1='\[\e[1;35m\]❯\[\e[0m\] ' && clear`
 Enter
 Sleep 300ms
-Type "testless index"
+Type "git --no-pager diff    # I changed one function"
 Show
 
 Sleep 700ms
 Enter
-Sleep 2s
-
-Type "sed -i 's/a + b;/a + b + 1;/' src/math.ts   # change one function"
-Enter
-Sleep 1200ms
+Sleep 2200ms
 
 Type "testless select --from HEAD"
 Enter
-Sleep 2.5s
+Sleep 2500ms
 
 Type "testless select --from HEAD --format args"
 Enter

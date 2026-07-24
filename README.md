@@ -54,6 +54,16 @@ prints nothing and exits 2, so branch on the exit code:
 testless select --from origin/main --format args > cmds.txt || RUN_ALL=1
 ```
 
+## On real repos
+
+| Repo | Change | testless selects |
+|---|---|---|
+| withastro/astro | a Markdoc transform fix | 6 of 6,121 tests |
+| gin-gonic/gin | a panic-recovery fix | 18 of 674 tests |
+| openclaw/openclaw | full index: 106,594 tests across 22,797 files | 86s cold, then incremental |
+
+Live recordings of these runs rotate on [the website](https://testless.itaywol.tools).
+
 ## Languages
 
 TypeScript / JavaScript (vitest, jest `-t` patterns) · Go (`go test -run`) · Rust (`cargo test`)
