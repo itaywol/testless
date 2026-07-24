@@ -1,0 +1,22 @@
+# testless
+
+> Cut your test time to the minimum: function-level test impact analysis via static AST that picks only the tests a change could break. Selection is always a superset of the truly impacted tests, testless never silently skips a test that could fail. TypeScript/JavaScript, Go, and Rust. MIT licensed.
+
+testless parses a repo into a function-level graph with tree-sitter, diffs changes structurally (comments and formatting are free), and walks the graph to find every test a change could break. It prints the test runner's own CLI invocation, ready to execute. On real repos: astro selects 6 of 6,121 tests for a Markdoc transform fix, gin selects 18 of 674 tests for a panic-recovery fix, and openclaw indexes 106,594 tests across 22,797 files in 86 seconds cold.
+
+## Docs
+- [Full reference](https://testless.itaywol.tools/llms-full.txt): Complete command reference, config format, guarantee, language support, and install matrix in one document.
+- [README](https://testless.itaywol.tools/readme.md): Canonical project README, mirrored from the repository at build time.
+- [Website](https://testless.itaywol.tools/): Landing page with live demo recordings on real repositories.
+- [Repository](https://github.com/itaywol/testless): Source code, issues, releases, CONTRIBUTING.
+
+## Install
+- [npm: testless-cli](https://www.npmjs.com/package/testless-cli): `npm i -D testless-cli` (bin: `testless`)
+- [crates.io: testless](https://crates.io/crates/testless): `cargo binstall testless` or `cargo install testless`
+- [Homebrew](https://github.com/itaywol/testless): `brew install itaywol/testless/testless`
+- [Install script](https://testless.itaywol.tools/install.sh): `curl -fsSL https://testless.itaywol.tools/install.sh | sh`
+
+## Optional
+- [Releases](https://github.com/itaywol/testless/releases): Prebuilt binaries for all supported platforms.
+- [Issues](https://github.com/itaywol/testless/issues): Roadmap and bug tracker.
+- [CONTRIBUTING](https://github.com/itaywol/testless/blob/main/CONTRIBUTING.md): How to add a new language plugin.

@@ -1,0 +1,77 @@
+# testless
+
+> Cut your test time to the minimum. Run 5 tests instead of 500 by reading your code, not your coverage.
+
+testless parses your repo into a function-level graph with tree-sitter, diffs changes structurally (comments and formatting are free), and walks the graph to find every test a change could break. It prints your runner's own CLI invocations, ready to execute.
+
+## Guarantee
+
+Selection is always a superset of the truly impacted tests. testless widens instead of guessing, and never silently skips a test that could fail.
+
+## Install
+
+| Ecosystem | Command |
+|---|---|
+| JS / TS | `npm i -D testless-cli` (bin: `testless`) |
+| Go | `curl -fsSL https://testless.itaywol.tools/install.sh \| sh` or `brew install itaywol/testless/testless` |
+| Rust | `cargo binstall testless` or `cargo install testless` |
+
+Prebuilt binaries: https://github.com/itaywol/testless/releases
+Nix flake repo: `nix develop`
+
+## Commands
+
+```bash
+testless index                                    # build the graph (.testless/)
+testless select --from <rev> [--to <rev>] [--format json|text|args]  # tests impacted by changes
+testless changes                                  # functions the static AST diff detected as changed
+testless why <test-id>                             # explains why a specific test was selected
+```
+
+`select` output is JSON when piped, human-readable text on a TTY. On fallback-to-everything, `--format args` prints nothing and exits with code 2, so scripts should branch on the exit code:
+
+```bash
+testless select --from origin/main --format args > cmds.txt || RUN_ALL=1
+```
+
+## Config
+
+Optional `testless.toml` at the repo root, for the cases static inference cannot cover:
+
+```toml
+always-run = ["tests/smoke/**", "**/*.e2e.test.ts"]  # always select these tests
+ignore = ["**/generated/**", "*.pb.go"]               # never index these files
+```
+
+## Languages
+
+| Language | Test runner support |
+|---|---|
+| TypeScript / JavaScript | vitest, jest `-t` patterns |
+| Go | `go test -run` |
+| Rust | `cargo test` |
+
+A new language is roughly one plugin file, see CONTRIBUTING.md in the repository.
+
+## Real-repo numbers
+
+| Repo | Change | testless selects | Indexing time |
+|---|---|---|---|
+| withastro/astro | Markdoc transform fix | 6 of 6,121 tests | 3.1s |
+| gin-gonic/gin | Panic-recovery fix | 18 of 674 tests | 0.3s |
+| openclaw/openclaw | Full index | 106,594 tests across 22,797 files | 86s cold, then incremental |
+
+Live recordings of these runs rotate on https://testless.itaywol.tools
+
+## Status
+
+Young project. The selection engine works end to end on all three languages, precision improves release by release. Roadmap lives in GitHub issues.
+
+## Project facts
+
+- License: MIT
+- Author: Itay Wolfish, https://itaywol.com
+- Repository: https://github.com/itaywol/testless
+- crates.io: https://crates.io/crates/testless
+- npm: https://www.npmjs.com/package/testless-cli
+- Website: https://testless.itaywol.tools

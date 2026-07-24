@@ -5,7 +5,7 @@
   "version": "0.0.1",
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build",
+    "build": "sed 's#assets/logo-animated.svg#https://raw.githubusercontent.com/itaywol/testless/main/assets/logo-animated.svg#' ../README.md > public/readme.md && astro build",
     "preview": "astro preview"
   },
   "dependencies": {
