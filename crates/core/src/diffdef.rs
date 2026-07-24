@@ -4,7 +4,7 @@
 //! implementation stamps onto every `ExtractedDef` (see
 //! `fingerprint::split_fingerprint` / `fingerprint::module_init_fingerprint`).
 //!
-//! This module never parses anything itself — it operates purely on
+//! This module never parses anything itself: it operates purely on
 //! `Extraction` values, so it has no dependency on tree-sitter or any
 //! concrete language.
 
@@ -183,7 +183,7 @@ mod tests {
             .iter()
             .any(|c| matches!(c, DefChange::ModuleInitChanged)));
         // Exactly 4 changes: BodyChanged(a), SigChanged(b), Added(fresh),
-        // Removed(gone) — the unchanged `<module>` yields no entry.
+        // Removed(gone); the unchanged `<module>` yields no entry.
         assert_eq!(changes.len(), 4);
     }
 

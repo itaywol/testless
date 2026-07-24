@@ -1,6 +1,6 @@
 //! Def-level diff invariance tests (Plan 3, Task 2), plus (Task 4) the
 //! change-classifier's rule table exercised end-to-end against real
-//! tree-sitter-parsed TS fixtures — `classify` needs a real `Language` to
+//! tree-sitter-parsed TS fixtures: `classify` needs a real `Language` to
 //! diff old/new content, so that coverage lives here rather than in
 //! `testless-core` (which has no language crate to link against).
 
@@ -25,7 +25,7 @@ fn extract_ts(src: &str) -> Extraction {
 /// `math.ts` reformatted and commented throughout (line breaks moved,
 /// indentation changed, a comment added before/inside/after every def and at
 /// the top level) but with exactly the same tokens as the original fixture
-/// file — no identifier, literal, or keyword changed. `diff_defs` on the two
+/// file, with no identifier, literal, or keyword changed. `diff_defs` on the two
 /// extractions must report zero changes: this is the whole point of
 /// structural (comment/formatting-insensitive) fingerprinting from Task 1.
 const MATH_TS_REFORMATTED: &str = r#"
@@ -100,10 +100,10 @@ const MATH_ADD_ORIGINAL: &str =
     "export function add(a: number, b: number): number { return a + b; }\n";
 
 /// (a) A pure body edit of `add` (same signature, different implementation)
-/// must seed exactly `add`'s def with `SeedKind::Body` — nothing else.
+/// must seed exactly `add`'s def with `SeedKind::Body`; nothing else.
 /// `export function add() {}` is wrapped in `export_statement`, but
 /// `module_init_skip` looks at the `declaration` field child and still skips
-/// it (a def-shaped export), so `<module>` stays clean — precise
+/// it (a def-shaped export), so `<module>` stays clean: precise
 /// function-level selection is preserved even for exported defs (the
 /// content-aware refinement of Item 1's `module_init_skip`).
 #[test]
@@ -146,7 +146,7 @@ fn body_edit_seeds_exactly_that_defs_body() {
 /// body edit (`export const mul = (a, b) => a * b` -> `a + b`) seeds only
 /// `mul`'s own def change (`SigChanged`, per the existing accepted
 /// limitation that an arrow/function-expression const's span has no `body`
-/// field of its own — see `push_def`'s doc comment) and must NOT also seed
+/// field of its own; see `push_def`'s doc comment) and must NOT also seed
 /// `<module>`: the whole `lexical_declaration` has a single, arrow-valued
 /// declarator, so `lexical_all_fn_valued` skips it from the module hash.
 #[test]
@@ -195,7 +195,7 @@ fn exported_arrow_const_body_edit_does_not_seed_module_init() {
 
 /// Item 1 new coverage: a top-level `export const` whose value isn't an
 /// arrow/function (so it's never captured as its own def) still surfaces a
-/// change — as a `ModuleInit` seed — now that `lexical_declaration`/
+/// change, as a `ModuleInit` seed, now that `lexical_declaration`/
 /// `export_statement` are no longer excluded from the module-init hash. Before
 /// the fix this value edit was hashed nowhere and produced zero seeds.
 #[test]
@@ -240,7 +240,7 @@ fn export_const_value_edit_seeds_module_init() {
 }
 
 /// (b) An edit that only adds a comment (no token change) must classify as
-/// an empty selection — zero seeds is a valid outcome for a nonempty
+/// an empty selection: zero seeds is a valid outcome for a nonempty
 /// `changed` list.
 #[test]
 fn comment_only_edit_yields_empty_selection() {
@@ -363,7 +363,7 @@ fn added_test_file_seeds_test_cases_and_module_init_as_added() {
     }
 }
 
-/// (e) A deleted, previously-indexed source file forces `RunAll` — the
+/// (e) A deleted, previously-indexed source file forces `RunAll`: the
 /// documented sound-but-coarse decision for Plan 3.
 #[test]
 fn deleted_source_file_forces_run_all() {
@@ -396,7 +396,7 @@ fn deleted_source_file_forces_run_all() {
 }
 
 /// (f) An unindexed file (no registered `Language`) with no importer
-/// referencing it contributes zero seeds — e.g. a README edit.
+/// referencing it contributes zero seeds, e.g. a README edit.
 #[test]
 fn unindexed_file_with_no_importers_yields_empty_selection() {
     let tmp = tempfile::tempdir().unwrap();
@@ -424,7 +424,7 @@ fn unindexed_file_with_no_importers_yields_empty_selection() {
 }
 
 /// (g) A changed `data.json` that's referenced only via raw (unresolved)
-/// import text — `import data from "./data.json"` — seeds the importer's
+/// import text, `import data from "./data.json"`, seeds the importer's
 /// `ModuleInit`, since the import can't be an `Edge::Imports` (json isn't an
 /// indexed language) but the reference is real.
 #[test]
@@ -472,7 +472,7 @@ fn unresolved_json_import_seeds_importers_module_init() {
 }
 
 /// (h) Item 3: `scan_importers` also matches on the changed file's basename
-/// *without* extension — `import cfg from "./config"` (an extensionless
+/// *without* extension: `import cfg from "./config"` (an extensionless
 /// specifier) must still match a changed `config.json`, since the raw import
 /// text never contains the `.json` suffix.
 #[test]
@@ -559,7 +559,7 @@ mod cli_changes {
     }
 
     /// (a) A body-only edit of `add` (same signature) surfaces exactly one
-    /// seed — `add`'s `body` change — as JSON on a piped stdout, exit 0.
+    /// seed, `add`'s `body` change, as JSON on a piped stdout, exit 0.
     #[test]
     fn body_edit_yields_selection_seed_json() {
         let tmp = init_repo();
@@ -636,7 +636,7 @@ mod cli_changes {
     }
 
     /// Item 2: a `--from` rev `changed_files` can't resolve degrades to a
-    /// `run_all` fallback (exit 2) rather than a hard error — exit 1 stays
+    /// `run_all` fallback (exit 2) rather than a hard error; exit 1 stays
     /// reserved for index/cache infrastructure failures.
     #[test]
     fn bad_from_rev_degrades_to_run_all_exit_2() {
@@ -671,7 +671,7 @@ mod cli_changes {
     // Mirrors (a)/(b) above but for Go and Rust repos, proving `changes`
     // isn't TS-only. `go.mod`/`Cargo.toml` are config globs (see
     // `classify::EXACT_CONFIG_NAMES`), which would force `RunAll` if they
-    // were part of the *changed* set — but here they're only present at
+    // were part of the *changed* set, but here they're only present at
     // commit time and untouched afterwards, so they never enter `changed`.
 
     fn init_go_repo() -> tempfile::TempDir {
@@ -700,7 +700,7 @@ mod cli_changes {
     }
 
     /// A body-only edit of Go's `Add` (same signature) surfaces exactly one
-    /// seed — `Add`'s `body` change — as JSON on a piped stdout, exit 0.
+    /// seed, `Add`'s `body` change, as JSON on a piped stdout, exit 0.
     #[test]
     fn go_body_edit_yields_selection_seed_json() {
         let tmp = init_go_repo();
@@ -753,7 +753,7 @@ mod cli_changes {
     }
 
     /// A comment-only edit in `math.rs` (no token change) yields an empty
-    /// seed list, still exit 0 — the Rust mirror of the TS comment-only case.
+    /// seed list, still exit 0: the Rust mirror of the TS comment-only case.
     #[test]
     fn rust_comment_only_edit_yields_empty_seeds() {
         let tmp = init_rust_repo();

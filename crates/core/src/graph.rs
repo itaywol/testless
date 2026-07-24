@@ -52,12 +52,12 @@ pub struct Graph {
     pub files: Vec<FileNode>,
     pub defs: Vec<Def>,
     pub edges: Vec<Edge>,
-    /// `ModuleInit` def per file, indexed by `FileId` — built incrementally
+    /// `ModuleInit` def per file, indexed by `FileId`; built incrementally
     /// in `add_def` so `module_init` is an O(1) lookup instead of an
     /// O(defs) scan. Kept in sync with `add_file` (which appends `None` so
     /// the vec stays aligned with `files`) and `add_def`.
     module_inits: Vec<Option<DefId>>,
-    /// Defs belonging to each file, indexed by `FileId` — built
+    /// Defs belonging to each file, indexed by `FileId`; built
     /// incrementally in `add_def` so `defs_in_file` is O(defs in that
     /// file) instead of an O(all defs) scan.
     file_defs: Vec<Vec<DefId>>,

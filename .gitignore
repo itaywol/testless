@@ -1,3 +1,4 @@
 target/
 .testless/
 npm/testless-*/bin/testless
+.superpowers/

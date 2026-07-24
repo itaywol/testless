@@ -46,7 +46,7 @@ impl Language for TsLanguage {
         //       below on that child.
         //     - no `declaration` child at all (`export default <expr>`,
         //       `export * from "..."`, `export { x }`, `export { x } from
-        //       "..."`, and — a tree-sitter-typescript quirk — an
+        //       "..."`, and, as a tree-sitter-typescript quirk, an
         //       *anonymous* `export default function () {}`/`class {}`) ->
         //       don't skip: this is either loose code or a re-export, and
         //       either way nothing else hashes it.
@@ -59,7 +59,7 @@ impl Language for TsLanguage {
         //     now dirties `<module>`. A single-declarator arrow/function
         //     const IS skipped, keeping its body edits precise (covered only
         //     by its own def's hash, same as a bare function declaration). A
-        //     mixed statement (`const a = 1, b = () => {}`) is NOT skipped —
+        //     mixed statement (`const a = 1, b = () => {}`) is NOT skipped:
         //     accepted widening, since `b`'s own def hash already covers its
         //     body precisely and the extra `<module>` dirtying only adds a
         //     seed, never hides one.
@@ -96,7 +96,7 @@ impl Language for TsLanguage {
         // in `defs`. The refs pass uses it to track the innermost enclosing
         // def while walking every function body in the file.
         let mut scope_of: HashMap<usize, usize> = HashMap::new();
-        // Node ids of "binding declaration" identifiers — a def's own name
+        // Node ids of "binding declaration" identifiers: a def's own name
         // (so the refs pass doesn't mistake `function f() {}`'s own `f` for a
         // read of `f`) and import specifiers' own bound names (so `import {
         // add } from "./math"` doesn't itself count as a read of `add`).
@@ -181,7 +181,7 @@ impl Language for TsLanguage {
 }
 
 /// Whether every `variable_declarator` in a `lexical_declaration` (`const`/
-/// `let`) has an arrow-function or function-expression value — i.e. every
+/// `let`) has an arrow-function or function-expression value: i.e. every
 /// declarator is already captured as its own `Function` def by
 /// `walk_top_level`'s `lexical_declaration` handling, so the whole statement
 /// is safe to exclude from the module-init hash without hiding a change.
@@ -262,7 +262,7 @@ fn collect_imports(node: Node, src: &[u8], imports: &mut Vec<ImportRef>) {
 /// clauses: default imports (`import Foo from ...`), namespace imports
 /// (`import * as ns from ...`), and named imports, including aliases
 /// (`import { x as y } from ...` binds `y`, not `x`). Each bound identifier's
-/// node id is also recorded into `excluded_name_ids` — the import statement
+/// node id is also recorded into `excluded_name_ids`: the import statement
 /// itself must not be mistaken by the refs pass for a *use* of the name it
 /// binds.
 fn collect_import_bindings(
@@ -296,7 +296,7 @@ fn collect_import_bindings(
                             continue;
                         }
                         // `import { x as y }` binds the local name `y`, not
-                        // the module's exported name `x` — but neither
+                        // the module's exported name `x`, but neither
                         // identifier is a genuine reference to a symbol *in
                         // this file*, so both are excluded from read scanning.
                         if let Some(name) = spec.child_by_field_name("name") {
@@ -333,7 +333,7 @@ struct RefCtx<'a> {
     scope_of: &'a HashMap<usize, usize>,
     /// Node ids of defs' own name identifiers (excluded from read scanning).
     def_name_ids: &'a HashSet<usize>,
-    /// Import bindings ∪ top-level def names — the cheap allow-list that
+    /// Import bindings ∪ top-level def names: the cheap allow-list that
     /// keeps read extraction from flooding on local variables.
     known_names: &'a HashSet<String>,
 }
@@ -343,8 +343,8 @@ fn node_text<'a>(node: Node, src: &'a [u8]) -> &'a str {
 }
 
 /// Walk the whole tree recording `calls` and `reads`, threading
-/// `current_def` — the index (into `Extraction.defs`) of the innermost
-/// enclosing def — down through every function/method/test body via
+/// `current_def`: the index (into `Extraction.defs`) of the innermost
+/// enclosing def, down through every function/method/test body via
 /// `ctx.scope_of`. Top-level code (no enclosing def) uses `current_def`'s
 /// initial value, 0 (`<module>`).
 fn walk_refs(
@@ -470,7 +470,7 @@ fn walk_refs(
     }
 }
 
-/// Keep the first occurrence of each `(from_def, name, qualifier)` triple —
+/// Keep the first occurrence of each `(from_def, name, qualifier)` triple:
 /// callers may legitimately reference the same symbol from the same def more
 /// than once (e.g. in a loop), but the graph only needs the edge once.
 fn dedup_refs(refs: Vec<ExtractedRef>) -> Vec<ExtractedRef> {
@@ -494,7 +494,7 @@ enum TestCallKind {
 struct TestCallMatch {
     kind: TestCallKind,
     /// For curried `it.each(table)("name", fn)` / `describe.each(...)(...)`
-    /// forms, the id of the inner call node (`it.each(table)`) — it must be
+    /// forms, the id of the inner call node (`it.each(table)`); it must be
     /// skipped during generic recursion so it isn't independently
     /// re-classified as its own (spurious) leaf/describe call.
     skip_child_id: Option<usize>,
@@ -599,7 +599,7 @@ fn walk_tests(
                         .map(|(name, _)| name.clone())
                         .collect();
                     // The node is the whole `it`/`test` call_expression, which
-                    // has no `body` field — split_fingerprint's sig_hash thus
+                    // has no `body` field, so split_fingerprint's sig_hash
                     // covers the entire call (name + callback tokens) and
                     // body_hash is always None. A change anywhere inside the
                     // test (title or body) therefore surfaces as SigChanged,
@@ -631,7 +631,7 @@ fn walk_tests(
 }
 
 /// Recurse into every child of `node`, except the child (if any) matching
-/// `skip_id` by node id — used to avoid re-classifying the inner call of a
+/// `skip_id` by node id: used to avoid re-classifying the inner call of a
 /// curried `it.each(table)("name", fn)` form as its own spurious leaf/describe.
 fn walk_children_skipping(
     node: Node,
@@ -652,7 +652,7 @@ fn walk_children_skipping(
 
 /// Walk a top-level (or class-body) node, extracting defs. `parent` is the
 /// index (into `defs`) of the enclosing class, if any. Extension point for
-/// future def kinds (test cases, etc.) — add more match arms here rather
+/// future def kinds (test cases, etc.); add more match arms here rather
 /// than rewriting the walk.
 fn walk_top_level(
     node: Node,
@@ -692,7 +692,7 @@ fn walk_top_level(
                 if let Some(name) = declarator.child_by_field_name("name") {
                     // `push_def`'s span is `node` (the whole
                     // `lexical_declaration`/`variable_declaration`
-                    // statement), which has no `body` field itself — so
+                    // statement), which has no `body` field itself, so
                     // sig_hash covers the entire statement (keyword, name,
                     // arrow/function value, semicolon) and body_hash is
                     // always None here. Same accepted limitation as

@@ -1,6 +1,6 @@
 # testless
 
-> Run 5 tests instead of 500. — test-impact analysis that reads your code, not your coverage.
+> Run 5 tests instead of 500: test-impact analysis that reads your code, not your coverage.
 
 [![CI](https://github.com/itaywol/testless/actions/workflows/ci.yml/badge.svg)](https://github.com/itaywol/testless/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/testless.svg)](https://crates.io/crates/testless)
@@ -11,14 +11,13 @@
 
 ## Install
 
-```bash
-npm i -D testless        # or: npx testless
-cargo install testless
-```
+**JS/TS**: `npm i -D testless` (or `npx testless`)
+**Go**: `curl -fsSL https://raw.githubusercontent.com/itaywol/testless/main/install.sh | sh`
+**Rust**: `cargo binstall testless` (or `cargo install testless`)
 
 Prebuilt binaries: [Releases](https://github.com/itaywol/testless/releases).
-This is a Nix flake repo — `nix develop` gets you a dev shell with everything
-needed to `cargo build --release -p testless`.
+Nix flake: `nix develop` gets you a dev shell with everything needed to
+`cargo build --release -p testless`.
 
 ## Use
 
@@ -30,7 +29,7 @@ testless select --from origin/main --format args  # ready-to-run vitest/go test/
 
 `index`/`select` print JSON when piped, human-readable text on a TTY.
 `--format args` prints nothing on stdout when testless falls back to running
-everything (exit code 2) — branch on the exit code, not on empty output:
+everything (exit code 2): branch on the exit code, not on empty output:
 
 ```bash
 testless select --from origin/main --format args > cmds.txt || RUN_ALL=1
@@ -43,7 +42,7 @@ structural AST diff (comments and formatting cost nothing) finds what actually
 changed; a reverse impact walk finds every test that can reach it; results
 print as your test runner's own CLI invocations.
 
-**The selected set is always a superset of the truly impacted set** — when
+**The selected set is always a superset of the truly impacted set**: when
 static analysis can't resolve something (dynamic dispatch, mocks, reflection),
 testless widens the selection rather than risk skipping a test that could fail.
 
@@ -60,7 +59,7 @@ A language is ~1 plugin file. See [CONTRIBUTING](CONTRIBUTING.md).
 ## Status
 
 Young project: the selection engine works end-to-end on TS/Go/Rust today, and
-precision keeps improving release by release. Design details and roadmap:
-[spec](docs/superpowers/specs/2026-07-23-testless-design.md).
+precision keeps improving release by release. Design discussion and roadmap
+live on [GitHub issues](https://github.com/itaywol/testless/issues).
 
 [MIT](LICENSE)

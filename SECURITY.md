@@ -15,7 +15,7 @@ Include what you can:
 
 This is a best-effort, single-maintainer project. There is no bug bounty.
 You'll get an acknowledgment and a fix or mitigation timeline as soon as
-reasonably possible — there's no fixed SLA.
+reasonably possible; there's no fixed SLA.
 
 ## Scope
 

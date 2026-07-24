@@ -7,7 +7,7 @@
 //! - `Calls{from, to: Resolved(D)}` -> `from` is impacted (D's caller).
 //! - `Reads{from, to: D}` -> `from` is impacted (D's reader).
 //! - `Contains{parent, child: D}` -> `parent` is impacted (D's container:
-//!   the parent's behavior embeds D, e.g. a class containing a method) —
+//!   the parent's behavior embeds D, e.g. a class containing a method):
 //!   *unless* `parent` is a `ModuleInit`: the indexer wires every parentless
 //!   def (an ordinary top-level function, not just genuinely nested ones)
 //!   to its file's `ModuleInit` as a bookkeeping fallback, and that edge
@@ -19,7 +19,7 @@
 //!   to D).
 //! - If D is a `ModuleInit`: every file in the transitive importer closure
 //!   of D's file (including D's own file) has its `ModuleInit` enqueued and
-//!   its `TestCase` defs enqueued too (not just collected — a widened test
+//!   its `TestCase` defs enqueued too (not just collected; a widened test
 //!   must keep propagating through its own callers just like any other
 //!   visited `TestCase`; importing a module re-runs that module's top-level
 //!   side effects, and running any test in an importing file re-runs the
@@ -42,7 +42,7 @@ use crate::graph::{CallTarget, DefId, DefKind, Edge, FileId, Graph};
 /// because the reverse edges built below already reach every referencer of
 /// a def regardless of *what* changed about it. `kind` stays on `Seed` for
 /// future precision (e.g. a pure-signature-compatible rename could
-/// eventually skip re-walking callers) and for richer reporting — it's
+/// eventually skip re-walking callers) and for richer reporting; it's
 /// reserved, not dead weight.
 pub fn impacted_tests(graph: &Graph, seeds: &[Seed]) -> Vec<DefId> {
     let index = ReverseIndex::build(graph);
@@ -78,7 +78,7 @@ pub fn impacted_tests(graph: &Graph, seeds: &[Seed]) -> Vec<DefId> {
             // `indexer::index_repo_incremental` wires every parentless def
             // (an ordinary top-level function, not just genuinely nested
             // ones) to its file's `ModuleInit` via `Contains`, purely as
-            // bookkeeping — there is no class/struct whose behavior
+            // bookkeeping; there is no class/struct whose behavior
             // "embeds" a plain top-level function merely because they share
             // a file. Reverse-propagating through THAT edge would make the
             // `ModuleInit` widening below (importer-closure + all of the
@@ -109,7 +109,7 @@ pub fn impacted_tests(graph: &Graph, seeds: &[Seed]) -> Vec<DefId> {
                     if file_def.kind == DefKind::TestCase {
                         // Enqueue (not just collect) so the main loop's
                         // uniform TestCase handling both records the test
-                        // AND keeps propagating through its own callers —
+                        // AND keeps propagating through its own callers:
                         // otherwise a test helper collected here would
                         // silently stop the walk short of any external
                         // caller of that helper.
@@ -194,7 +194,7 @@ impl<'g> ReverseIndex<'g> {
     }
 
     /// The transitive closure of files that (directly or indirectly) import
-    /// `file`, including `file` itself — importing a module re-runs it, so
+    /// `file`, including `file` itself; importing a module re-runs it, so
     /// this is exactly the set of files whose `ModuleInit` needs
     /// re-enqueuing and whose tests re-run the change.
     fn importer_closure(&self, file: FileId) -> Vec<FileId> {
@@ -359,7 +359,7 @@ mod tests {
 
     /// Regression: `index_repo_incremental` wires every parentless def (an
     /// ordinary top-level function, not just genuinely nested ones) to its
-    /// file's `ModuleInit` via `Contains`, purely as bookkeeping — that
+    /// file's `ModuleInit` via `Contains`, purely as bookkeeping; that
     /// edge must NOT reverse-propagate into the `ModuleInit` importer-
     /// closure widening, or every top-level def change would sweep in
     /// every test in its file (and every transitively importing file)
@@ -434,7 +434,7 @@ mod tests {
     #[test]
     fn module_init_widened_test_propagates_to_external_caller() {
         // File A: module_init M_a, helper TestCase H (no import relationship
-        // needed here — H is collected directly as a TestCase in A's own
+        // needed here: H is collected directly as a TestCase in A's own
         // file during the module_init importer-closure step). File B:
         // TestCase T_ext calls H directly (Calls{Resolved(H)}).
         // Seed M_a -> H is collected via the module_init closure step, but
@@ -464,7 +464,7 @@ mod tests {
     #[test]
     fn unknown_widening_fires_for_def_reached_mid_walk() {
         // Seed X; Y calls X (Calls{from: Y, to: Resolved(X)}), so visiting
-        // (seeded) X enqueues Y as its caller — Y is reached MID-WALK, not
+        // (seeded) X enqueues Y as its caller; Y is reached MID-WALK, not
         // itself a seed. Elsewhere, test T has an unresolved call matching
         // Y's short name. Widening must be evaluated for every def dequeued
         // during the walk (not just seeds), so T must still be selected.

@@ -8,7 +8,7 @@
 //! Rule precedence (highest first):
 //! 1. Any changed path matching [`is_config_file`] -> `RunAll` immediately.
 //! 2. Deleted/renamed-away *indexed* source file -> `RunAll { reason:
-//!    "deleted source file" }` — sound if coarse; a later plan can narrow
+//!    "deleted source file" }`: sound if coarse; a later plan can narrow
 //!    this to just the file's former importers.
 //! 3. Added indexed file -> seed its `TestCase` defs and its `ModuleInit`,
 //!    both `SeedKind::Added` (new exports; nothing referenced them before).
@@ -89,7 +89,7 @@ pub fn is_config_file(path: &Path) -> bool {
 /// Classify `changed` against `new_graph` (built by indexing `repo`'s
 /// current content) into a `ChangeMode`. `extractions` is the
 /// `CachedExtraction` slice returned alongside `new_graph` by
-/// `index_repo_incremental` — same order as `new_graph.files`, reused here
+/// `index_repo_incremental`: same order as `new_graph.files`, reused here
 /// (instead of re-reading + re-parsing every indexed file) whenever an
 /// unrecognized changed path needs an importer scan. `old_src_of` yields the
 /// from-rev content of a given (repo-relative) path, `Ok(None)` if it didn't
@@ -178,7 +178,7 @@ fn classify_one(
     let old_src = old_src_of(old_path)
         .map_err(|e| format!("reading old content of {}: {e:#}", old_path.display()))?;
     let Some(old_src) = old_src else {
-        // No prior content found (unexpected for Modified/Renamed) — treat
+        // No prior content found (unexpected for Modified/Renamed); treat
         // gracefully as if the file were newly added rather than erroring.
         return Ok(PerFile::Seeds(seed_added_file(new_graph, file_id)));
     };
@@ -233,7 +233,7 @@ fn classify_one(
 }
 
 /// A newly-added file: seed every `TestCase` def plus the file's
-/// `ModuleInit`, both `Added` — nothing referenced this file's other defs
+/// `ModuleInit`, both `Added`: nothing referenced this file's other defs
 /// before, so only its own tests and its top-level side effects need
 /// running.
 fn seed_added_file(new_graph: &Graph, file_id: FileId) -> Vec<Seed> {
@@ -255,9 +255,9 @@ fn seed_added_file(new_graph: &Graph, file_id: FileId) -> Vec<Seed> {
 }
 
 /// Scan every already-indexed file's raw import text (from `extractions`,
-/// which lines up index-for-index with `new_graph.files` — no re-reading or
+/// which lines up index-for-index with `new_graph.files`; no re-reading or
 /// re-parsing) for a reference to any of `changed_paths` (basename substring
-/// match — both the full basename, e.g. `config.json`, and the basename with
+/// match: both the full basename, e.g. `config.json`, and the basename with
 /// its extension stripped, e.g. `config`, so an extensionless import
 /// specifier like `import cfg from "./config"` still matches a changed
 /// `config.json`). Each match seeds that importing file's `ModuleInit`.

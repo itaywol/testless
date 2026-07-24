@@ -5,8 +5,8 @@
 
 ### Features
 
-* **cli:** args format — runner-consumable invocations ([6ae477c](https://github.com/itaywol/testless/commit/6ae477c146661b23c956bbe73792f71c73754e69))
-* **cli:** select command — impacted-test selection output ([2a5a657](https://github.com/itaywol/testless/commit/2a5a657576a02a3a515291461a76666e5989ea24))
+* **cli:** args format: runner-consumable invocations ([6ae477c](https://github.com/itaywol/testless/commit/6ae477c146661b23c956bbe73792f71c73754e69))
+* **cli:** select command: impacted-test selection output ([2a5a657](https://github.com/itaywol/testless/commit/2a5a657576a02a3a515291461a76666e5989ea24))
 
 
 ### Bug Fixes
@@ -28,7 +28,7 @@
 
 ### Features
 
-* **cli:** changes command — classified impact seeds ([073011e](https://github.com/itaywol/testless/commit/073011eaa0050f7ffd30160f2684d2508b91dc9f))
+* **cli:** changes command: classified impact seeds ([073011e](https://github.com/itaywol/testless/commit/073011eaa0050f7ffd30160f2684d2508b91dc9f))
 * **core:** change classification to impact seeds ([d6f53b7](https://github.com/itaywol/testless/commit/d6f53b7678d179eb3a2909ce19d9128f98cb48d0))
 * **core:** def-level structural diff with sig/body split ([2766107](https://github.com/itaywol/testless/commit/27661076be468812f1bcca7934ec439832a15a35))
 
@@ -36,7 +36,7 @@
 ### Bug Fixes
 
 * **cli:** compute changes diff before writing the index cache ([1d48c1a](https://github.com/itaywol/testless/commit/1d48c1a21689b0e4529edaf7852247a448d7193d))
-* **lang-ts:** content-aware module-init skip — precise exported-def hashing ([73c7b7a](https://github.com/itaywol/testless/commit/73c7b7a571146d19aac2cebdfd0d00341426da27))
+* **lang-ts:** content-aware module-init skip: precise exported-def hashing ([73c7b7a](https://github.com/itaywol/testless/commit/73c7b7a571146d19aac2cebdfd0d00341426da27))
 * TS module-scope change visibility, git-status widening, review nits ([eba2664](https://github.com/itaywol/testless/commit/eba266441a6b1e5260131597aa197a867fc3eb46))
 
 

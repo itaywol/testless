@@ -37,7 +37,7 @@ impl Language for GoLanguage {
         // def": it contributes no separate def (see
         // `handle_function_declaration`), so if its `function_declaration`
         // node were skipped like any other, its body would be covered by
-        // *no* hash anywhere — a real under-approximation (a change confined
+        // *no* hash anywhere: a real under-approximation (a change confined
         // to `init()`'s body would select zero tests). So `init` is
         // deliberately carved out of the skip: its node's kind is still
         // `function_declaration`, but the closure checks the name field text
@@ -77,7 +77,7 @@ impl Language for GoLanguage {
         let mut def_name_ids: HashSet<usize> = HashSet::new();
         // Node ids of `call_expression`s recognized as `t.Run`/`b.Run`
         // subtest declarations (receiver matches the enclosing testing
-        // param) — excluded from ordinary call extraction since they're
+        // param): excluded from ordinary call extraction since they're
         // already represented as TestCase defs.
         let mut subtest_ids: HashSet<usize> = HashSet::new();
 
@@ -188,7 +188,7 @@ fn handle_function_declaration(
         def_name_ids.insert(name_node.id());
 
         // The root's own `*testing.T/B/F` param name (e.g. `t` in
-        // `TestFoo(t *testing.T)`) — `is_run_call` requires a `.Run`
+        // `TestFoo(t *testing.T)`): `is_run_call` requires a `.Run`
         // receiver to match this exact name, so `t.Run(...)` is recognized
         // as a subtest but an unrelated `srv.Run(...)` is not.
         let testing_param = node
@@ -345,7 +345,7 @@ fn testing_param_name(params: Node, src: &[u8]) -> Option<String> {
 /// emitting a child TestCase for each. A literal string first argument
 /// contributes its own segment to the chain; anything else contributes a
 /// single synthetic `<computed>` child (deduped via `used_synthetic`, scoped
-/// to `enclosing_idx` — i.e. max one `<computed>` child per node, not per
+/// to `enclosing_idx`: i.e. max one `<computed>` child per node, not per
 /// root). `enclosing_idx`/`enclosing_chain` identify the *immediately*
 /// enclosing subtest (which may itself be a nested `t.Run`, not necessarily
 /// the top-level root), so chains and parents thread correctly through
@@ -355,7 +355,7 @@ fn testing_param_name(params: Node, src: &[u8]) -> Option<String> {
 /// under different parents don't dedupe against each other.
 ///
 /// `testing_param` is the name of the enclosing scope's `*testing.T/B/F`
-/// parameter (see `testing_param_name`) — `is_run_call` only recognizes a
+/// parameter (see `testing_param_name`): `is_run_call` only recognizes a
 /// `.Run` call as a subtest when its receiver identifier matches this exact
 /// name, so an unrelated `srv.Run(...)` in the same body is left as an
 /// ordinary call rather than misread as a subtest.
@@ -400,7 +400,7 @@ fn walk_subtests(
     }
 }
 
-/// Is this a `call_expression` whose callee is `<testing_param>.Run` —
+/// Is this a `call_expression` whose callee is `<testing_param>.Run`,
 /// matched by selector field name `Run` *and* the receiver identifier
 /// equalling the enclosing scope's own testing-handle param name (recorded
 /// when its TestCase/subtest was created). A `.Run` call on any other
@@ -555,7 +555,7 @@ fn collect_imports(node: Node, src: &[u8], imports: &mut Vec<ImportRef>) {
 
 /// The cheap allow-list used to filter read extraction down to non-local
 /// noise: same-file top-level function names, plus each import's local
-/// package qualifier (the last `/`-separated segment of its raw path —
+/// package qualifier (the last `/`-separated segment of its raw path;
 /// aliases aren't tracked, an acceptable simplification since none of this
 /// crate's fixtures use them).
 fn build_known_names(defs: &[ExtractedDef], imports: &[ImportRef]) -> HashSet<String> {
@@ -584,9 +584,9 @@ struct RefCtx<'a> {
     /// Node ids of defs' own name identifiers (excluded from read scanning).
     def_name_ids: &'a HashSet<usize>,
     /// Node ids of `call_expression`s recognized as `t.Run`/`b.Run` subtest
-    /// declarations — excluded from ordinary call extraction.
+    /// declarations: excluded from ordinary call extraction.
     subtest_ids: &'a HashSet<usize>,
-    /// Import package qualifiers ∪ top-level function names — the cheap
+    /// Import package qualifiers ∪ top-level function names: the cheap
     /// allow-list that keeps read extraction from flooding on local names.
     known_names: &'a HashSet<String>,
 }
@@ -596,14 +596,14 @@ fn node_text<'a>(node: Node, src: &'a [u8]) -> &'a str {
 }
 
 /// Walk the whole tree recording `calls` and `reads`, threading
-/// `current_def` — the index (into `Extraction.defs`) of the innermost
-/// enclosing def — down through every function/method/subtest body via
+/// `current_def`: the index (into `Extraction.defs`) of the innermost
+/// enclosing def, down through every function/method/subtest body via
 /// `ctx.scope_of`. Top-level code (no enclosing def, e.g. a package-level
 /// var initializer) uses `current_def`'s initial value, 0 (`<module>`).
 ///
 /// Type annotations like `*testing.T` never interfere here: their package
 /// name is grammar-kind `package_identifier` and a method's own name is
-/// `field_identifier` — both distinct from the plain `identifier` kind this
+/// `field_identifier`: both distinct from the plain `identifier` kind this
 /// walk treats as a possible read, so they fall through the generic
 /// recursion arm untouched. Method values and `go f()` goroutines need no
 /// special casing either: the wrapping node (a selector value, a
@@ -710,7 +710,7 @@ fn walk_refs(
     }
 }
 
-/// Keep the first occurrence of each `(from_def, name, qualifier)` triple —
+/// Keep the first occurrence of each `(from_def, name, qualifier)` triple:
 /// callers may legitimately reference the same symbol from the same def more
 /// than once (e.g. in a loop), but the graph only needs the edge once.
 fn dedup_refs(refs: Vec<ExtractedRef>) -> Vec<ExtractedRef> {

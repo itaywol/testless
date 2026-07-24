@@ -1,13 +1,13 @@
 //! `--format args`: render selected tests as ready-to-run test-runner
 //! command lines (vitest / `go test` / `cargo test`). Pure string
-//! generation — this module never spawns a process, it only builds the
+//! generation: this module never spawns a process, it only builds the
 //! strings a human or CI job would paste into a shell.
 //!
 //! One line per selected test (v1 keeps it simple: no multi-test `-t`
 //! grouping), deduplicated (a `computed` entry drops its exactness flag,
 //! so two computed tests in the same file/package collapse to one
 //! whole-file invocation) and returned in deterministic (lexicographic)
-//! order regardless of input order — callers can rely on stable diffs.
+//! order regardless of input order; callers can rely on stable diffs.
 
 use crate::SelectedTest;
 
@@ -21,7 +21,7 @@ use crate::SelectedTest;
 /// A token made up only of characters that are never special to a POSIX
 /// shell (`[A-Za-z0-9_./:=@^-]+`) is passed through bare, matching the
 /// unquoted output this module has always produced for ordinary
-/// identifiers and paths. Anything else — including the empty string — is
+/// identifiers and paths. Anything else, including the empty string, is
 /// wrapped in single quotes, with embedded apostrophes closed out and
 /// re-opened via the standard `'\''` trick (`'`, end quoting; `\'`, a
 /// literal apostrophe; `'`, resume quoting).
@@ -96,7 +96,7 @@ fn gotest_line(t: &SelectedTest) -> String {
 }
 
 /// `cargo test <shell-quoted chain joined with ::> -- --exact`. `computed`
-/// (rare — Rust test paths are almost always static module chains) drops
+/// (rare: Rust test paths are almost always static module chains) drops
 /// `--exact`, matching by substring instead of exact path.
 fn cargo_line(t: &SelectedTest) -> String {
     let chain = sh_quote(&t.name.join("::"));
@@ -109,7 +109,7 @@ fn cargo_line(t: &SelectedTest) -> String {
 
 /// Render `tests` as one runner-consumable command line each, deduplicated
 /// and sorted for a deterministic, script-friendly stdout stream. A
-/// `runner` this module doesn't recognize (only `"unknown"` today — see
+/// `runner` this module doesn't recognize (only `"unknown"` today, see
 /// `runner_for_lang`) is silently skipped: there's no sensible command to
 /// print for it, and `select`'s `json`/`text` formats already surface the
 /// `"unknown"` label for inspection.

@@ -21,7 +21,7 @@ pub struct ExtractedDef {
     /// index into the same Vec (contains nesting)
     pub parent: Option<usize>,
     /// Structural fingerprint of the def's signature (everything but its
-    /// `body` field child) — see `fingerprint::split_fingerprint`. For
+    /// `body` field child). See `fingerprint::split_fingerprint`. For
     /// `ModuleInit`, this is instead the fingerprint over the file's loose
     /// top-level code (`fingerprint::module_init_fingerprint`).
     pub sig_hash: [u8; 32],

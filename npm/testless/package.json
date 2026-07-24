@@ -1,7 +1,7 @@
 {
   "name": "testless",
   "version": "0.0.0-managed",
-  "description": "Run 5 tests instead of 500 — test impact analysis for TypeScript, Go, and Rust",
+  "description": "Run 5 tests instead of 500: test impact analysis for TypeScript, Go, and Rust",
   "keywords": [
     "testing",
     "test-selection",
