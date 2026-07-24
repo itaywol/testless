@@ -7,3 +7,5 @@ edition = "2021"
 license = "MIT"
 description = "Function-level test impact analysis via static AST"
 repository = "https://github.com/itaywol/testless"
+keywords = ["testing", "test-selection", "impact-analysis", "tree-sitter", "ci"]
+categories = ["development-tools::testing", "command-line-utilities"]

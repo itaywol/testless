@@ -1,0 +1,81 @@
+name: Bug report
+description: Report a problem with testless (wrong test selection, crash, incorrect impact analysis, etc.)
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. The more concrete the
+        repro, the faster it gets fixed.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug you ran into.
+      placeholder: testless selected/missed a test that it shouldn't have, or the command crashed with ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      description: What should testless have done instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: |
+        A minimal repo/snippet that reproduces the issue, or the exact
+        commands you ran (e.g. `testless index`, `testless select --from origin/main`).
+      placeholder: |
+        1. testless index
+        2. testless select --from origin/main
+        3. ...
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: select-output
+    attributes:
+      label: "`testless select --from ...` output"
+      description: Paste the full output (or relevant excerpt) of the select command, including any error messages.
+      render: shell
+
+  - type: checkboxes
+    id: languages
+    attributes:
+      label: Language(s) affected
+      description: Which language plugin(s) does this bug involve?
+      options:
+        - label: TypeScript / JavaScript
+        - label: Go
+        - label: Rust
+        - label: Not language-specific / core
+
+  - type: input
+    id: version
+    attributes:
+      label: testless version
+      description: Output of `testless --version`
+      placeholder: testless 0.5.0
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS / platform
+      placeholder: e.g. Ubuntu 24.04, macOS 15, NixOS
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Anything else that might help (CI logs, related PRs, config).

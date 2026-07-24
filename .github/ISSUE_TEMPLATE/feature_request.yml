@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest an idea or improvement for testless
+title: "[feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Please describe the problem before the
+        solution — it's easier to evaluate alternatives that way.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem are you trying to solve? What's missing or awkward today?
+      placeholder: I'm always frustrated when ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What would you like testless to do instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative solutions, workarounds, or existing tools you've tried.
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Anything else — related issues, links, screenshots, example repos.
