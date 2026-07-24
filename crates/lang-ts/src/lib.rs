@@ -713,6 +713,14 @@ fn walk_top_level(
             if let Some(name) = node.child_by_field_name("name") {
                 let class_idx = push_def(node, name, DefKind::Class, src, defs, parent);
                 def_name_ids.insert(name.id());
+                // The class's own scope: catches refs in class-body members
+                // that don't open their own scope (field initializers, e.g.
+                // `x = compute();`), so they attribute to the class def
+                // rather than falling through to `<module>`. Method bodies
+                // still win: `walk_refs` re-resolves `scope_of` at every
+                // node, so a method_definition's own (more specific) entry,
+                // inserted below, overrides this one for nodes inside it.
+                scope_of.insert(node.id(), class_idx);
                 if let Some(body) = node.child_by_field_name("body") {
                     let mut cursor = body.walk();
                     for member in body.children(&mut cursor) {
