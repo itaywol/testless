@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0](https://github.com/itaywol/testless/compare/testless-lang-rust-v0.5.1...testless-lang-rust-v0.6.0) (2026-07-24)
+
+
+### Miscellaneous Chores
+
+* **testless-lang-rust:** Synchronize testless versions
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * testless-core bumped from 0.5.1 to 0.6.0
+
 ## [0.5.1](https://github.com/itaywol/testless/compare/testless-lang-rust-v0.5.0...testless-lang-rust-v0.5.1) (2026-07-24)
 
 
