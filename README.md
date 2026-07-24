@@ -34,7 +34,7 @@ widens instead of guessing, and never silently skips a test that could fail.
 | Ecosystem | Command |
 |---|---|
 | JS / TS | `npm i -D testless-cli` (bin: `testless`) |
-| Go | `curl -fsSL https://testless.itaywol.tools/install.sh \| sh` |
+| Go | `curl -fsSL https://testless.itaywol.tools/install.sh \| sh` or `brew install itaywol/testless/testless` |
 | Rust | `cargo binstall testless` or `cargo install testless` |
 
 Prebuilt binaries on [Releases](https://github.com/itaywol/testless/releases). Nix flake repo: `nix develop`.
@@ -63,6 +63,15 @@ testless select --from origin/main --format args > cmds.txt || RUN_ALL=1
 | openclaw/openclaw | full index: 106,594 tests across 22,797 files | 86s cold, then incremental |
 
 Live recordings of these runs rotate on [the website](https://testless.itaywol.tools).
+
+## Config
+
+Optional `testless.toml` at the repo root, for the cases static inference can't cover:
+
+```toml
+always-run = ["tests/smoke/**", "**/*.e2e.test.ts"]  # always select these tests
+ignore = ["**/generated/**", "*.pb.go"]               # never index these files
+```
 
 ## Languages
 

@@ -219,6 +219,148 @@ fn comment_only_edit_yields_empty_tests() {
     assert_eq!(json["stats"]["total_known"], 5);
 }
 
+// ---------------------------------------------------------------------
+// `testless.toml` escape hatch (issue #15): `always-run` (selection-level)
+// and `ignore` (discovery-level) globs.
+// ---------------------------------------------------------------------
+
+const SMOKE_TEST_TS: &str = "\
+import { it, expect } from \"vitest\";
+it(\"smoke check\", () => { expect(true).toBe(true); });
+";
+
+const ALWAYS_RUN_TESTLESS_TOML: &str = "always-run = [\"src/smoke.test.ts\"]\n";
+
+/// Same base fixture as `init_repo`, plus an unrelated `src/smoke.test.ts`
+/// and a `testless.toml` marking it `always-run`, all committed together
+/// (so the config file itself is never part of a later diff).
+fn init_repo_with_always_run() -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("package.json"),
+        "{ \"name\": \"select-fixture\" }\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("src/math.ts"), MATH_TS).unwrap();
+    std::fs::write(root.join("src/format.ts"), FORMAT_TS).unwrap();
+    std::fs::write(root.join("src/math.test.ts"), MATH_TEST_TS).unwrap();
+    std::fs::write(root.join("src/format.test.ts"), FORMAT_TEST_TS).unwrap();
+    std::fs::write(root.join("src/unrelated.test.ts"), UNRELATED_TEST_TS).unwrap();
+    std::fs::write(root.join("src/smoke.test.ts"), SMOKE_TEST_TS).unwrap();
+    std::fs::write(root.join("testless.toml"), ALWAYS_RUN_TESTLESS_TOML).unwrap();
+    git(root, &["init", "-b", "main"]);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-m", "initial"]);
+    tmp
+}
+
+/// `always-run` in `testless.toml` selects a matching test even when the
+/// walk itself found nothing to seed: a comment-only edit of `add` (zero
+/// seeds, see `comment_only_edit_yields_empty_tests`) still selects exactly
+/// `src/smoke.test.ts`'s test, because that file's path matches the
+/// `always-run` glob regardless of the walk's own result.
+#[test]
+fn always_run_glob_selects_smoke_test_even_with_zero_seeds() {
+    let tmp = init_repo_with_always_run();
+    let root = tmp.path();
+    std::fs::write(root.join("src/math.ts"), MATH_TS_COMMENT_EDITED).unwrap();
+
+    let assert = Command::cargo_bin("testless")
+        .unwrap()
+        .arg("select")
+        .current_dir(root)
+        .assert()
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| {
+        panic!("expected JSON stdout, got {out:?} ({e})");
+    });
+
+    assert_eq!(json["mode"], "selection");
+    assert_eq!(json["stats"]["seeds"], 0, "comment-only edit seeds nothing");
+    // 5 fixture tests (as in comment_only_edit_yields_empty_tests) plus the
+    // smoke test itself.
+    assert_eq!(json["stats"]["total_known"], 6);
+    assert_eq!(json["stats"]["selected"], 1);
+
+    let tests = json["tests"].as_array().expect("tests array");
+    assert_eq!(
+        tests.len(),
+        1,
+        "expected exactly the smoke test, got {tests:?}"
+    );
+    assert_eq!(tests[0]["file"], "src/smoke.test.ts");
+    assert_eq!(tests[0]["name"].as_array().unwrap()[0], "smoke check");
+}
+
+const GENERATED_TEST_TS: &str = "\
+import { it, expect } from \"vitest\";
+it(\"generated check\", () => { expect(1).toBe(1); });
+";
+
+const IGNORE_TESTLESS_TOML: &str = "ignore = [\"src/generated/**\"]\n";
+
+/// Same base fixture as `init_repo`, plus a `src/generated/models.test.ts`
+/// (a file that, absent any config, would be indexed and add one more
+/// known test) and a `testless.toml` marking `src/generated/**` `ignore`d.
+fn init_repo_with_ignore() -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src/generated")).unwrap();
+    std::fs::write(
+        root.join("package.json"),
+        "{ \"name\": \"select-fixture\" }\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("src/math.ts"), MATH_TS).unwrap();
+    std::fs::write(root.join("src/format.ts"), FORMAT_TS).unwrap();
+    std::fs::write(root.join("src/math.test.ts"), MATH_TEST_TS).unwrap();
+    std::fs::write(root.join("src/format.test.ts"), FORMAT_TEST_TS).unwrap();
+    std::fs::write(root.join("src/unrelated.test.ts"), UNRELATED_TEST_TS).unwrap();
+    std::fs::write(root.join("src/generated/models.test.ts"), GENERATED_TEST_TS).unwrap();
+    std::fs::write(root.join("testless.toml"), IGNORE_TESTLESS_TOML).unwrap();
+    git(root, &["init", "-b", "main"]);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-m", "initial"]);
+    tmp
+}
+
+/// `ignore` in `testless.toml` drops a matching file at discovery time: its
+/// test never becomes part of `total_known`, and it's never selectable,
+/// even though it's present on disk and would otherwise be indexed.
+#[test]
+fn ignore_glob_excludes_generated_file_from_total_known() {
+    let tmp = init_repo_with_ignore();
+    let root = tmp.path();
+    std::fs::write(root.join("src/math.ts"), MATH_TS_BODY_EDITED).unwrap();
+
+    let assert = Command::cargo_bin("testless")
+        .unwrap()
+        .arg("select")
+        .current_dir(root)
+        .assert()
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| {
+        panic!("expected JSON stdout, got {out:?} ({e})");
+    });
+
+    // Same total as add_body_edit_selects_add_and_formats_tests_excludes_unrelated's
+    // fixture (5 tests): the generated file's test is excluded entirely, not
+    // just unselected.
+    assert_eq!(json["stats"]["total_known"], 5);
+
+    let tests = json["tests"].as_array().expect("tests array");
+    assert!(
+        tests
+            .iter()
+            .all(|t| t["file"] != "src/generated/models.test.ts"),
+        "generated file's test must never be selectable, got {tests:?}"
+    );
+}
+
 /// (c) A `package.json` edit forces `run_all`, exit 2.
 #[test]
 fn config_file_edit_forces_run_all_exit_2() {
@@ -238,18 +380,240 @@ fn config_file_edit_forces_run_all_exit_2() {
     assert!(json["reason"].as_str().unwrap().contains("package.json"));
 }
 
-/// `--to` isn't supported yet in v1: documented punt, hard error exit 1;
-/// mirrors `changes`'s identical rejection.
+// ---------------------------------------------------------------------
+// `--to <rev>` (issue #17): analyze an arbitrary `--from`..`--to` rev
+// range instead of `--from` vs. the live worktree, by materializing `--to`
+// in a temporary git worktree and running the whole pipeline rooted there.
+//
+// Fixture: three commits.
+// - C1: baseline, `src/math.ts` (`add` + `unrelatedHelper`) and
+//   `src/greet.ts` (`greet`), each with its own test file.
+// - C2: edits `add`'s body only.
+// - C3: (on top of C2) edits `greet`'s body only.
+//
+// `--from C1 --to C2` must select only `add`'s two tests (the range
+// contains no `greet` change at all, even though `greet.ts` in the C2
+// worktree is untouched relative to C1); `--from C1 --to C3` must select
+// both `add`'s and `greet`'s tests, since both changes fall in that range.
+// `unrelatedHelper`'s test must never be selected in either case.
+// ---------------------------------------------------------------------
+
+const GREET_TS: &str = "\
+export function greet(name: string): string { return `Hello, ${name}!`; }
+";
+
+const GREET_TS_BODY_EDITED: &str = "\
+export function greet(name: string): string { return `Hi, ${name}!`; }
+";
+
+const GREET_TEST_TS: &str = "\
+import { it, expect } from \"vitest\";
+import { greet } from \"./greet\";
+it(\"greets by name\", () => { expect(greet(\"Ada\")).toBe(\"Hello, Ada!\"); });
+";
+
+fn rev_parse(dir: &std::path::Path, rev: &str) -> String {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", rev])
+        .output()
+        .expect("failed to spawn git rev-parse");
+    assert!(output.status.success(), "git rev-parse {rev} failed");
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+/// Builds the three-commit `--to` fixture, returning the tempdir alongside
+/// each commit's full sha (C1, C2, C3, in that order).
+fn init_to_range_repo() -> (tempfile::TempDir, String, String, String) {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("package.json"), "{ \"name\": \"to-fixture\" }\n").unwrap();
+    // Distinct tests calling this helper (potentially concurrently, since
+    // `cargo test` runs tests in parallel by default) must not produce
+    // byte-identical commits: an otherwise-identical tree + the same-second
+    // author/committer timestamp would hash to the *same* commit sha, and
+    // since the `--to` temp worktree's path is derived solely from that sha
+    // (by design: collision-safe across runs against the same rev), two
+    // unrelated repos racing to the same sha would collide on the same
+    // filesystem path. This nonce (the tempdir's own, guaranteed-unique
+    // path) makes every call's tree distinct, hence every commit's sha
+    // distinct, regardless of timing.
+    std::fs::write(root.join(".nonce"), root.display().to_string()).unwrap();
+    std::fs::write(root.join("src/math.ts"), MATH_TS).unwrap();
+    std::fs::write(root.join("src/greet.ts"), GREET_TS).unwrap();
+    std::fs::write(root.join("src/math.test.ts"), MATH_TEST_TS).unwrap();
+    std::fs::write(root.join("src/greet.test.ts"), GREET_TEST_TS).unwrap();
+    git(root, &["init", "-b", "main"]);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-m", "C1: baseline"]);
+    let c1 = rev_parse(root, "HEAD");
+
+    std::fs::write(root.join("src/math.ts"), MATH_TS_BODY_EDITED).unwrap();
+    git(root, &["commit", "-am", "C2: edit add's body"]);
+    let c2 = rev_parse(root, "HEAD");
+
+    std::fs::write(root.join("src/greet.ts"), GREET_TS_BODY_EDITED).unwrap();
+    git(root, &["commit", "-am", "C3: edit greet's body"]);
+    let c3 = rev_parse(root, "HEAD");
+
+    (tmp, c1, c2, c3)
+}
+
+/// `--from C1 --to C2`: only `add`'s two tests are selected. `greet`'s test
+/// (unchanged in this range) and `unrelatedHelper`'s test (never changed)
+/// are both excluded.
 #[test]
-fn to_flag_is_rejected() {
-    let tmp = init_repo();
-    Command::cargo_bin("testless")
+fn to_flag_selects_only_changes_within_from_to_to_range() {
+    let (tmp, c1, c2, _c3) = init_to_range_repo();
+
+    let assert = Command::cargo_bin("testless")
         .unwrap()
-        .args(["select", "--to", "HEAD"])
+        .args(["select", "--from", &c1, "--to", &c2])
         .current_dir(tmp.path())
         .assert()
-        .code(1)
-        .stderr(predicates::str::contains("not yet supported"));
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| {
+        panic!("expected JSON stdout, got {out:?} ({e})");
+    });
+
+    assert_eq!(json["mode"], "selection");
+    let tests = json["tests"].as_array().expect("tests array");
+    let names: Vec<Vec<String>> = tests
+        .iter()
+        .map(|t| {
+            t["name"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s.as_str().unwrap().to_string())
+                .collect()
+        })
+        .collect();
+
+    assert!(
+        names.contains(&vec!["add".to_string(), "handles negatives".to_string()]),
+        "expected add/handles negatives in {names:?}"
+    );
+    assert!(
+        names.contains(&vec!["add".to_string(), "handles zero".to_string()]),
+        "expected add/handles zero in {names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|n| n.first().map(|s| s.as_str()) == Some("greets by name")),
+        "greet's test must NOT be selected for a C1..C2 range, got {names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|n| n.first().map(|s| s.as_str()) == Some("unrelatedHelper")),
+        "unrelatedHelper's test must NOT be selected, got {names:?}"
+    );
+    assert_eq!(
+        tests.len(),
+        2,
+        "expected exactly 2 selected tests, got {tests:?}"
+    );
+}
+
+/// `--from C1 --to C3`: both `add`'s and `greet`'s tests are selected
+/// (both changes fall inside the range), `unrelatedHelper`'s stays excluded.
+#[test]
+fn to_flag_selects_both_changes_across_wider_range() {
+    let (tmp, c1, _c2, c3) = init_to_range_repo();
+
+    let assert = Command::cargo_bin("testless")
+        .unwrap()
+        .args(["select", "--from", &c1, "--to", &c3])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| {
+        panic!("expected JSON stdout, got {out:?} ({e})");
+    });
+
+    assert_eq!(json["mode"], "selection");
+    let tests = json["tests"].as_array().expect("tests array");
+    let names: Vec<Vec<String>> = tests
+        .iter()
+        .map(|t| {
+            t["name"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s.as_str().unwrap().to_string())
+                .collect()
+        })
+        .collect();
+
+    assert!(
+        names.contains(&vec!["add".to_string(), "handles negatives".to_string()]),
+        "expected add/handles negatives in {names:?}"
+    );
+    assert!(
+        names.contains(&vec!["add".to_string(), "handles zero".to_string()]),
+        "expected add/handles zero in {names:?}"
+    );
+    assert!(
+        names.contains(&vec!["greets by name".to_string()]),
+        "expected greet's test in {names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|n| n.first().map(|s| s.as_str()) == Some("unrelatedHelper")),
+        "unrelatedHelper's test must NOT be selected, got {names:?}"
+    );
+    assert_eq!(
+        tests.len(),
+        3,
+        "expected exactly 3 selected tests, got {tests:?}"
+    );
+}
+
+/// The temp worktree materializing `--to` is cleaned up after the run: its
+/// directory (`$TMPDIR/testless-to-<full-sha-of-to>`) must not exist once
+/// the process has exited.
+#[test]
+fn to_flag_cleans_up_temp_worktree_after_run() {
+    let (tmp, c1, c2, _c3) = init_to_range_repo();
+    let worktree_dir = std::env::temp_dir().join(format!("testless-to-{c2}"));
+
+    Command::cargo_bin("testless")
+        .unwrap()
+        .args(["select", "--from", &c1, "--to", &c2])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    assert!(
+        !worktree_dir.exists(),
+        "expected temp worktree {} to be cleaned up after the run",
+        worktree_dir.display()
+    );
+}
+
+/// A `--to` rev that doesn't resolve locally degrades to the same
+/// `run_all`/exit-2 fallback as a bad `--from` rev, rather than a hard
+/// error.
+#[test]
+fn bad_to_rev_degrades_to_run_all_exit_2() {
+    let tmp = init_repo();
+    let assert = Command::cargo_bin("testless")
+        .unwrap()
+        .args(["select", "--to", "not-a-real-rev"])
+        .current_dir(tmp.path())
+        .assert()
+        .code(2);
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(json["mode"], "run_all");
+    assert!(json["reason"].as_str().unwrap().contains("--to"));
 }
 
 /// `--format text` prints `file :: seg1 > seg2` lines on stdout and a
@@ -591,7 +955,9 @@ mod tests {
 ";
 
 const RUST_FMT_RS: &str = "\
-pub fn fmt(a: i64, b: i64) -> String { format!(\"{}\", crate::math::add(a, b)) }
+use crate::math::add;
+
+pub fn fmt(a: i64, b: i64) -> String { format!(\"{}\", add(a, b)) }
 
 #[cfg(test)]
 mod tests {

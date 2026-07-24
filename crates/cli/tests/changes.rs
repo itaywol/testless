@@ -117,7 +117,7 @@ fn body_edit_seeds_exactly_that_defs_body() {
     );
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
     let add = find_def(&graph, "add");
 
     let changed = vec![ChangedFile {
@@ -160,7 +160,7 @@ fn exported_arrow_const_body_edit_does_not_seed_module_init() {
     );
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
     let mul = find_def(&graph, "mul");
 
     let changed = vec![ChangedFile {
@@ -209,7 +209,7 @@ fn export_const_value_edit_seeds_module_init() {
     );
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
 
     let changed = vec![ChangedFile {
         path: PathBuf::from("src/config.ts"),
@@ -253,7 +253,7 @@ fn comment_only_edit_yields_empty_selection() {
     );
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
 
     let changed = vec![ChangedFile {
         path: PathBuf::from("src/math.ts"),
@@ -280,7 +280,7 @@ fn config_file_change_forces_run_all() {
     write(root, "src/math.ts", MATH_ADD_ORIGINAL);
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
 
     let changed = vec![ChangedFile {
         path: PathBuf::from("package.json"),
@@ -314,7 +314,7 @@ fn added_test_file_seeds_test_cases_and_module_init_as_added() {
     );
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
     let file_id = testless_core::FileId(
         graph
             .files
@@ -363,16 +363,34 @@ fn added_test_file_seeds_test_cases_and_module_init_as_added() {
     }
 }
 
-/// (e) A deleted, previously-indexed source file forces `RunAll`: the
-/// documented sound-but-coarse decision for Plan 3.
+/// (e) A deleted, previously-indexed source file that still has a live
+/// importer (its former importer's raw import text still references it,
+/// e.g. `import { helper } from "./removed"`) seeds that importer's
+/// `ModuleInit`, not `RunAll`: the importer will fail to resolve/compile
+/// against the missing module, so its tests need to run, but nothing
+/// unrelated does (issue #13).
 #[test]
-fn deleted_source_file_forces_run_all() {
+fn deleted_source_file_with_importer_seeds_importer_module_init() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
-    write(root, "src/math.ts", MATH_ADD_ORIGINAL);
+    // src/removed.ts existed before this change and has since been deleted;
+    // only its former importer remains on disk for the new-tree index.
+    write(
+        root,
+        "src/consumer.ts",
+        "import { helper } from \"./removed\";\nexport function useHelper(): unknown { return helper(); }\n",
+    );
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
+    let consumer_id = testless_core::FileId(
+        graph
+            .files
+            .iter()
+            .position(|f| f.path.ends_with("consumer.ts"))
+            .unwrap() as u32,
+    );
+    let consumer_module_init = graph.module_init(consumer_id).expect("module_init present");
 
     let changed = vec![ChangedFile {
         path: PathBuf::from("src/removed.ts"),
@@ -387,12 +405,41 @@ fn deleted_source_file_forces_run_all() {
         &extractions,
         &no_old_content,
     );
-    match &mode {
-        ChangeMode::RunAll { reason } => {
-            assert!(reason.contains("removed.ts"), "reason: {reason}");
-        }
-        other => panic!("expected RunAll, got {other:?}"),
-    }
+    assert_eq!(
+        mode,
+        ChangeMode::Selection(vec![Seed {
+            def: consumer_module_init,
+            kind: SeedKind::ModuleInit,
+        }])
+    );
+}
+
+/// (e2) A deleted, previously-indexed source file with no remaining
+/// importer contributes zero seeds: its own tests died along with it, and
+/// nothing else referenced it (issue #13).
+#[test]
+fn deleted_source_file_with_no_importers_yields_empty_selection() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write(root, "src/math.ts", MATH_ADD_ORIGINAL);
+
+    let registry = registry();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
+
+    let changed = vec![ChangedFile {
+        path: PathBuf::from("src/removed.ts"),
+        status: FileStatus::Deleted,
+    }];
+
+    let mode = classify(
+        root,
+        &graph,
+        &registry,
+        &changed,
+        &extractions,
+        &no_old_content,
+    );
+    assert_eq!(mode, ChangeMode::Selection(vec![]));
 }
 
 /// (f) An unindexed file (no registered `Language`) with no importer
@@ -405,7 +452,7 @@ fn unindexed_file_with_no_importers_yields_empty_selection() {
     write(root, "README.md", "# hello\n");
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
 
     let changed = vec![ChangedFile {
         path: PathBuf::from("README.md"),
@@ -439,7 +486,7 @@ fn unresolved_json_import_seeds_importers_module_init() {
     );
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
     let consumer_id = testless_core::FileId(
         graph
             .files
@@ -487,7 +534,7 @@ fn extensionless_import_matches_changed_file_by_stem() {
     );
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
     let consumer_id = testless_core::FileId(
         graph
             .files
@@ -519,11 +566,79 @@ fn extensionless_import_matches_changed_file_by_stem() {
     );
 }
 
+/// (i) Go's imports name package *directories*, never file stems, and
+/// same-package sibling files reference each other via nothing at all (no
+/// import statement). Deleting `pkg/helper.go` (whose `init()` a sibling
+/// test depends on structurally, since `init` folds into the file's
+/// `<module>`) must still seed the surviving same-package siblings'
+/// `ModuleInit` — the stem-based importer scan alone finds nothing here
+/// (no file anywhere imports the literal text `helper`/`helper.go`), so
+/// before this fix the selection was empty (issue: Go file deletion
+/// under-selects).
+#[test]
+fn deleted_go_file_seeds_package_siblings_module_init() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write(root, "go.mod", "module example.com/m\n\ngo 1.22\n");
+    write(
+        root,
+        "pkg/widget.go",
+        "package pkg\n\nfunc Widget() int { return 1 }\n",
+    );
+    write(
+        root,
+        "pkg/widget_test.go",
+        "package pkg\n\nimport \"testing\"\n\nfunc TestWidget(t *testing.T) {\n\tif Widget() != 1 {\n\t\tt.Fail()\n\t}\n}\n",
+    );
+
+    let registry = Registry::new(vec![Box::new(testless_lang_go::GoLanguage)]);
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
+
+    let test_file_id = testless_core::FileId(
+        graph
+            .files
+            .iter()
+            .position(|f| f.path.ends_with("widget_test.go"))
+            .unwrap() as u32,
+    );
+    let test_module_init = graph
+        .module_init(test_file_id)
+        .expect("module_init present");
+
+    // helper.go (a third file in the same package, never written to disk
+    // here: it's the file being deleted) held the sibling this test's
+    // `<module>` depended on. Its own `<module>` hash included an `init()`
+    // whose body a sibling test structurally depended on; deleting it must
+    // still seed the surviving siblings' `ModuleInit`.
+    let changed = vec![ChangedFile {
+        path: PathBuf::from("pkg/helper.go"),
+        status: FileStatus::Deleted,
+    }];
+
+    let mode = classify(
+        root,
+        &graph,
+        &registry,
+        &changed,
+        &extractions,
+        &no_old_content,
+    );
+    match mode {
+        ChangeMode::Selection(seeds) => {
+            assert!(!seeds.is_empty(), "expected a non-empty selection");
+            assert!(
+                seeds.iter().any(|s| s.def == test_module_init),
+                "expected the package test file's ModuleInit seeded, got {seeds:?}"
+            );
+        }
+        other => panic!("expected Selection (not RunAll), got {other:?}"),
+    }
+}
+
 // --- `testless changes` CLI e2e coverage (Plan 3, Task 5) --------------
 
 mod cli_changes {
     use assert_cmd::Command;
-    use predicates::prelude::*;
 
     fn git(dir: &std::path::Path, args: &[&str]) {
         let status = std::process::Command::new("git")
@@ -653,17 +768,107 @@ mod cli_changes {
         assert!(json["reason"].as_str().unwrap().contains("--from"));
     }
 
-    /// `--to` isn't supported yet in v1: documented punt, hard error exit 1.
+    fn rev_parse(dir: &std::path::Path, rev: &str) -> String {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["rev-parse", rev])
+            .output()
+            .expect("failed to spawn git rev-parse");
+        assert!(output.status.success(), "git rev-parse {rev} failed");
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    }
+
+    /// `--to <rev>` (issue #17): an explicit `--from`..`--to` rev range
+    /// (rather than `--from` vs. the worktree) reports exactly the seed for
+    /// a body edit committed between the two revisions.
     #[test]
-    fn to_flag_is_rejected() {
+    fn to_flag_reports_seed_for_rev_range() {
         let tmp = init_repo();
-        Command::cargo_bin("testless")
+        let root = tmp.path();
+        let c1 = rev_parse(root, "HEAD");
+
+        std::fs::write(
+            root.join("src/math.ts"),
+            "export function add(a: number, b: number): number { return a + b + 1; }\n",
+        )
+        .unwrap();
+        git(root, &["commit", "-am", "edit add's body"]);
+        let c2 = rev_parse(root, "HEAD");
+
+        let assert = Command::cargo_bin("testless")
             .unwrap()
-            .args(["changes", "--to", "HEAD"])
+            .args(["changes", "--from", &c1, "--to", &c2])
+            .current_dir(root)
+            .assert()
+            .success();
+        let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+        let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| {
+            panic!("expected JSON stdout, got {out:?} ({e})");
+        });
+        assert_eq!(json["mode"], "selection");
+        let seeds = json["seeds"].as_array().expect("seeds array");
+        assert!(
+            seeds
+                .iter()
+                .any(|s| s["def"] == "add" && s["kind"] == "body"),
+            "expected an add/body seed, got {seeds:?}"
+        );
+    }
+
+    /// A modified file matching `testless.toml`'s `ignore` globs is
+    /// discovery-level dropped (never indexed, see `discover`), so before
+    /// this fix it hit `classify`'s "indexed file missing from new graph"
+    /// error path and forced `run_all`. `ignore`'s contract is that a
+    /// matching change contributes zero seeds, same as any other change
+    /// `testless` can prove has no impact — not a blanket run-everything.
+    #[test]
+    fn ignored_file_change_yields_empty_selection_not_run_all() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src/generated")).unwrap();
+        std::fs::write(root.join("src/generated/api.ts"), "export const x = 1;\n").unwrap();
+        std::fs::write(
+            root.join("testless.toml"),
+            "ignore = [\"**/generated/**\"]\n",
+        )
+        .unwrap();
+        git(root, &["init", "-b", "main"]);
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-m", "initial"]);
+
+        std::fs::write(root.join("src/generated/api.ts"), "export const x = 2;\n").unwrap();
+
+        let assert = Command::cargo_bin("testless")
+            .unwrap()
+            .arg("changes")
+            .current_dir(root)
+            .assert()
+            .success();
+        let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+        let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| {
+            panic!("expected JSON stdout, got {out:?} ({e})");
+        });
+        assert_eq!(json["mode"], "selection");
+        assert_eq!(json["seeds"].as_array().unwrap().len(), 0);
+    }
+
+    /// A `--to` rev that doesn't resolve locally degrades to the same
+    /// `run_all`/exit-2 fallback as a bad `--from` rev, rather than a hard
+    /// error.
+    #[test]
+    fn bad_to_rev_degrades_to_run_all_exit_2() {
+        let tmp = init_repo();
+        let assert = Command::cargo_bin("testless")
+            .unwrap()
+            .args(["changes", "--to", "not-a-real-rev"])
             .current_dir(tmp.path())
             .assert()
-            .code(1)
-            .stderr(predicate::str::contains("not yet supported"));
+            .code(2);
+        let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+        let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(json["mode"], "run_all");
+        assert!(json["reason"].as_str().unwrap().contains("--to"));
     }
 
     // --- multi-language e2e coverage (Plan 3, Task 6) ------------------

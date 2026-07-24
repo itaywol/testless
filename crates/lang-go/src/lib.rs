@@ -100,9 +100,10 @@ impl Language for GoLanguage {
         }
 
         let mut imports = Vec::new();
-        collect_imports(root, src_bytes, &mut imports);
+        let mut import_aliases = Vec::new();
+        collect_imports(root, src_bytes, &mut imports, &mut import_aliases);
 
-        let known_names = build_known_names(&defs, &imports);
+        let known_names = build_known_names(&defs, &imports, &import_aliases);
 
         let ctx = RefCtx {
             src: src_bytes,
@@ -534,8 +535,21 @@ fn push_def(
 
 /// Recursively collect `import_declaration` specs: both the single-spec
 /// form (`import "fmt"`) and the parenthesized list form (`import (...)`,
-/// an `import_spec_list` of `import_spec`).
-fn collect_imports(node: Node, src: &[u8], imports: &mut Vec<ImportRef>) {
+/// an `import_spec_list` of `import_spec`). Also collects each spec's alias
+/// (`import foo "example.com/x/bar"`'s `name` field, when it's a genuine
+/// package alias rather than `_` (blank import) or `.` (dot import)) into
+/// `aliases`, so `build_known_names` can allow-list the alias qualifier
+/// actually used at call sites instead of guessing it from the raw path's
+/// last segment (which is wrong whenever the import is aliased).
+/// `ImportRef` itself stays alias-unaware: it's a shared cross-language type,
+/// and every other caller of `raw` needs the resolvable path, not the local
+/// binding name.
+fn collect_imports(
+    node: Node,
+    src: &[u8],
+    imports: &mut Vec<ImportRef>,
+    aliases: &mut Vec<String>,
+) {
     if node.kind() == "import_spec" {
         if let Some(path) = node.child_by_field_name("path") {
             if path.kind() == "interpreted_string_literal" {
@@ -546,19 +560,30 @@ fn collect_imports(node: Node, src: &[u8], imports: &mut Vec<ImportRef>) {
                 });
             }
         }
+        if let Some(name) = node.child_by_field_name("name") {
+            if name.kind() == "package_identifier" {
+                if let Ok(alias) = name.utf8_text(src) {
+                    aliases.push(alias.to_string());
+                }
+            }
+        }
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_imports(child, src, imports);
+        collect_imports(child, src, imports, aliases);
     }
 }
 
 /// The cheap allow-list used to filter read extraction down to non-local
 /// noise: same-file top-level function names, plus each import's local
-/// package qualifier (the last `/`-separated segment of its raw path;
-/// aliases aren't tracked, an acceptable simplification since none of this
-/// crate's fixtures use them).
-fn build_known_names(defs: &[ExtractedDef], imports: &[ImportRef]) -> HashSet<String> {
+/// package qualifier -- the alias, when the import declares one (`import foo
+/// "example.com/x/bar"` is referenced at call sites as `foo.Something`, not
+/// `bar.Something`), else the last `/`-separated segment of its raw path.
+fn build_known_names(
+    defs: &[ExtractedDef],
+    imports: &[ImportRef],
+    import_aliases: &[String],
+) -> HashSet<String> {
     let mut names: HashSet<String> = defs
         .iter()
         .filter(|d| d.kind == DefKind::Function)
@@ -571,6 +596,7 @@ fn build_known_names(defs: &[ExtractedDef], imports: &[ImportRef]) -> HashSet<St
             }
         }
     }
+    names.extend(import_aliases.iter().cloned());
     names
 }
 

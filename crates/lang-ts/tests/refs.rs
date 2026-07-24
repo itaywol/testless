@@ -40,6 +40,28 @@ fn test_bodies_attribute_calls_to_testcase() {
 }
 
 #[test]
+fn class_field_initializer_calls_attribute_to_class_not_module() {
+    let src = r#"
+import { compute } from "./util";
+export class Foo {
+    x = compute();
+    bar() { return other(); }
+}
+"#;
+    let ex = extract(src);
+    let foo = ex.defs.iter().position(|d| d.name == "Foo").unwrap();
+    let bar = ex.defs.iter().position(|d| d.name == "bar").unwrap();
+    assert!(ex
+        .calls
+        .iter()
+        .any(|c| c.name == "compute" && c.from_def == foo));
+    assert!(ex
+        .calls
+        .iter()
+        .any(|c| c.name == "other" && c.from_def == bar));
+}
+
+#[test]
 fn method_calls_carry_qualifier() {
     let src = r#"
 import { Calc } from "./math";

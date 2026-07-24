@@ -132,7 +132,8 @@ fn incremental_reindex_reuses_unchanged_files_and_reparses_only_the_changed_one(
 
     let files_count = |g: &testless_core::Graph| g.files.len();
 
-    let (graph, extractions, stats) = index_repo_incremental(root, &registry(), None).unwrap();
+    let (graph, extractions, stats) =
+        index_repo_incremental(root, &registry(), None, None).unwrap();
     assert_eq!(stats.parsed, files_count(&graph));
     assert_eq!(stats.reused, 0);
 
@@ -144,7 +145,7 @@ fn incremental_reindex_reuses_unchanged_files_and_reparses_only_the_changed_one(
     std::fs::write(&math_path, src).unwrap();
 
     let (graph2, _extractions2, stats2) =
-        index_repo_incremental(root, &registry(), Some((graph, extractions))).unwrap();
+        index_repo_incremental(root, &registry(), None, Some((graph, extractions))).unwrap();
 
     // Only math.ts changed, so only it should have been re-parsed.
     assert_eq!(stats2.parsed, 1);
