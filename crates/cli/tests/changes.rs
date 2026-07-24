@@ -363,10 +363,62 @@ fn added_test_file_seeds_test_cases_and_module_init_as_added() {
     }
 }
 
-/// (e) A deleted, previously-indexed source file forces `RunAll`: the
-/// documented sound-but-coarse decision for Plan 3.
+/// (e) A deleted, previously-indexed source file that still has a live
+/// importer (its former importer's raw import text still references it,
+/// e.g. `import { helper } from "./removed"`) seeds that importer's
+/// `ModuleInit`, not `RunAll`: the importer will fail to resolve/compile
+/// against the missing module, so its tests need to run, but nothing
+/// unrelated does (issue #13).
 #[test]
-fn deleted_source_file_forces_run_all() {
+fn deleted_source_file_with_importer_seeds_importer_module_init() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    // src/removed.ts existed before this change and has since been deleted;
+    // only its former importer remains on disk for the new-tree index.
+    write(
+        root,
+        "src/consumer.ts",
+        "import { helper } from \"./removed\";\nexport function useHelper(): unknown { return helper(); }\n",
+    );
+
+    let registry = registry();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let consumer_id = testless_core::FileId(
+        graph
+            .files
+            .iter()
+            .position(|f| f.path.ends_with("consumer.ts"))
+            .unwrap() as u32,
+    );
+    let consumer_module_init = graph.module_init(consumer_id).expect("module_init present");
+
+    let changed = vec![ChangedFile {
+        path: PathBuf::from("src/removed.ts"),
+        status: FileStatus::Deleted,
+    }];
+
+    let mode = classify(
+        root,
+        &graph,
+        &registry,
+        &changed,
+        &extractions,
+        &no_old_content,
+    );
+    assert_eq!(
+        mode,
+        ChangeMode::Selection(vec![Seed {
+            def: consumer_module_init,
+            kind: SeedKind::ModuleInit,
+        }])
+    );
+}
+
+/// (e2) A deleted, previously-indexed source file with no remaining
+/// importer contributes zero seeds: its own tests died along with it, and
+/// nothing else referenced it (issue #13).
+#[test]
+fn deleted_source_file_with_no_importers_yields_empty_selection() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     write(root, "src/math.ts", MATH_ADD_ORIGINAL);
@@ -387,12 +439,7 @@ fn deleted_source_file_forces_run_all() {
         &extractions,
         &no_old_content,
     );
-    match &mode {
-        ChangeMode::RunAll { reason } => {
-            assert!(reason.contains("removed.ts"), "reason: {reason}");
-        }
-        other => panic!("expected RunAll, got {other:?}"),
-    }
+    assert_eq!(mode, ChangeMode::Selection(vec![]));
 }
 
 /// (f) An unindexed file (no registered `Language`) with no importer

@@ -7,9 +7,14 @@
 //!
 //! Rule precedence (highest first):
 //! 1. Any changed path matching [`is_config_file`] -> `RunAll` immediately.
-//! 2. Deleted/renamed-away *indexed* source file -> `RunAll { reason:
-//!    "deleted source file" }`: sound if coarse; a later plan can narrow
-//!    this to just the file's former importers.
+//! 2. Deleted file (indexed or not) -> routed through the same raw-import
+//!    stem scan as rule 5: any still-present file whose raw import text
+//!    references the deleted path (by basename or extensionless stem)
+//!    seeds that importer's `ModuleInit` (`SeedKind::ModuleInit`). A
+//!    deleted file with no remaining importer contributes zero seeds —
+//!    its own tests died with it. (A `Renamed` file is handled by rule 4
+//!    instead: its old content is diffed directly against its new-path
+//!    content, so rename semantics are unaffected.)
 //! 3. Added indexed file -> seed its `TestCase` defs and its `ModuleInit`,
 //!    both `SeedKind::Added` (new exports; nothing referenced them before).
 //! 4. Modified/Renamed indexed file -> re-parse old vs. new content with
@@ -142,8 +147,11 @@ pub fn classify(
 
 enum PerFile {
     Seeds(Vec<Seed>),
-    /// `path` isn't recognized by any registered `Language`: batched up for
-    /// a single pass over every indexed file's raw imports.
+    /// `path` needs a raw-import stem scan rather than def-level diffing:
+    /// either it isn't recognized by any registered `Language`, or it was
+    /// deleted (so there's nothing on disk left to parse, indexed language
+    /// or not). Batched up for a single pass over every indexed file's raw
+    /// imports.
     ScanImporters(PathBuf),
 }
 
@@ -155,9 +163,10 @@ fn classify_one(
     old_src_of: &dyn Fn(&Path) -> anyhow::Result<Option<String>>,
 ) -> Result<PerFile, String> {
     if c.status == FileStatus::Deleted {
-        if registry.for_path(&c.path).is_some() {
-            return Err(format!("deleted source file: {}", c.path.display()));
-        }
+        // Whether or not `path` was itself indexable, it no longer exists
+        // to parse: fall back to the raw-import stem scan so any surviving
+        // importer's now-dangling reference still seeds that importer's
+        // `ModuleInit` (see rule 2's doc comment above).
         return Ok(PerFile::ScanImporters(c.path.clone()));
     }
 
@@ -261,6 +270,9 @@ fn seed_added_file(new_graph: &Graph, file_id: FileId) -> Vec<Seed> {
 /// its extension stripped, e.g. `config`, so an extensionless import
 /// specifier like `import cfg from "./config"` still matches a changed
 /// `config.json`). Each match seeds that importing file's `ModuleInit`.
+/// `changed_paths` may be files with no registered `Language` *or* deleted
+/// files (indexed or not) — either way there's no def-level diff to run, so
+/// this stem scan is the only way to find who's affected.
 fn scan_importers(
     new_graph: &Graph,
     extractions: &[CachedExtraction],
