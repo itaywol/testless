@@ -1,6 +1,5 @@
 import { defineConfig } from 'astro/config';
 
 export default defineConfig({
-  site: 'https://itaywol.github.io',
-  base: '/testless',
+  site: 'https://testless.itaywol.tools',
 });

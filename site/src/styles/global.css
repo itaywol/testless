@@ -4,8 +4,8 @@
   --bg-card: #131316;
   --fg: #f5f5f7;
   --fg-muted: #a1a1aa;
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.18);
   --accent-1: #2dd4bf;
   --accent-2: #a855f7;
   --gradient: linear-gradient(135deg, var(--accent-1) 0%, var(--accent-2) 100%);
@@ -20,27 +20,15 @@
   --max-width: 1080px;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #fafafa;
-    --bg-elevated: #ffffff;
-    --bg-card: #ffffff;
-    --fg: #0a0a0c;
-    --fg-muted: #52525b;
-    --border: rgba(0, 0, 0, 0.08);
-    --border-strong: rgba(0, 0, 0, 0.14);
-    --accent-1: #0d9488;
-    --accent-2: #7e22ce;
-    --focus-ring: #0d9488;
-  }
-}
+/* Dark-first, dark-only: rolldown-style commits to one mode instead of
+   flipping the palette per OS preference. Simpler and stronger. */
 
 * {
   box-sizing: border-box;
 }
 
 html {
-  color-scheme: dark light;
+  color-scheme: dark;
 }
 
 body {
@@ -120,31 +108,39 @@ h2 {
 /* ---------- Hero ---------- */
 
 .hero {
+  position: relative;
   padding: 120px 0 96px;
   text-align: center;
+  overflow: hidden;
+}
+
+.hero::before {
+  content: "";
+  position: absolute;
+  top: -180px;
+  left: 50%;
+  translate: -50% 0;
+  width: 900px;
+  height: 480px;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--accent-1) 22%, transparent),
+    transparent 70%
+  );
+  filter: blur(10px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.hero .wrap {
+  position: relative;
+  z-index: 1;
 }
 
 .logo {
   width: min(320px, 70vw);
   height: auto;
   margin: 0 auto 40px;
-}
-
-.logo-dark-img {
-  display: block;
-}
-
-.logo-light-img {
-  display: none;
-}
-
-@media (prefers-color-scheme: light) {
-  .logo-dark-img {
-    display: none;
-  }
-  .logo-light-img {
-    display: block;
-  }
 }
 
 .tagline {
@@ -187,6 +183,7 @@ h2 {
 .btn-primary {
   background: var(--gradient);
   color: #06060a;
+  box-shadow: 0 8px 24px -8px color-mix(in srgb, var(--accent-2) 55%, transparent);
 }
 
 .btn-secondary {
@@ -204,6 +201,7 @@ h2 {
 }
 
 .card {
+  min-width: 0;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -238,7 +236,9 @@ h2 {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   overflow-x: auto;
-  font-size: 0.85rem;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  -webkit-overflow-scrolling: touch;
 }
 
 .binaries-note {
@@ -260,13 +260,14 @@ h2 {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 12px;
-  max-width: 760px;
+  max-width: 900px;
   margin: 0 auto 28px;
 }
 
 .demo-frame img {
   border-radius: var(--radius-md);
   width: 100%;
+  height: auto;
 }
 
 .demo-caption {
