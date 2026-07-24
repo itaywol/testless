@@ -57,3 +57,55 @@ jobs:
             fi
             sleep 30
           done
+
+  npm-publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", registry-url: "https://registry.npmjs.org" }
+      - name: Publish npm packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::notice::no NPM_TOKEN set; skipping npm publish"
+            exit 0
+          fi
+
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#testless-v}"
+
+          workdir=$(mktemp -d)
+          gh release download "$tag" --dir "$workdir" --pattern 'testless-*.tar.gz'
+
+          declare -A targets=(
+            [x86_64-unknown-linux-gnu]=testless-linux-x64
+            [aarch64-unknown-linux-gnu]=testless-linux-arm64
+            [x86_64-apple-darwin]=testless-darwin-x64
+            [aarch64-apple-darwin]=testless-darwin-arm64
+          )
+
+          for target in "${!targets[@]}"; do
+            pkg="${targets[$target]}"
+            tar xzf "$workdir/testless-${target}.tar.gz" -C "npm/${pkg}/bin" testless
+            chmod +x "npm/${pkg}/bin/testless"
+            npm pkg set version="$version" --prefix "npm/${pkg}"
+          done
+
+          npm pkg set version="$version" --prefix npm/testless
+          node -e '
+            const fs = require("node:fs");
+            const path = "npm/testless/package.json";
+            const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+            for (const dep of Object.keys(pkg.optionalDependencies || {})) {
+              pkg.optionalDependencies[dep] = process.argv[1];
+            }
+            fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
+          ' "$version"
+
+          for pkg in testless-linux-x64 testless-linux-arm64 testless-darwin-x64 testless-darwin-arm64 testless; do
+            npm publish --access public "npm/${pkg}"
+          done
