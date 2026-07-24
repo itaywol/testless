@@ -4,21 +4,37 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 
-use testless_core::cache::Cache;
+mod format;
+
+use testless_core::cache::{Cache, CachedExtraction};
 use testless_core::classify::{classify, ChangeMode, SeedKind};
 use testless_core::gitio;
 use testless_core::graph::{CallTarget, DefKind, Edge, Graph};
 use testless_core::indexer::index_repo_incremental;
+use testless_core::walk::impacted_tests;
 use testless_core::Registry;
 
 #[derive(Parser)]
 #[command(
     name = "testless",
-    after_help = "Examples:\n  testless index\n  testless stats\n  testless changes --from origin/main\n  testless completion zsh > _testless"
+    after_help = "Examples:\n  testless index\n  testless stats\n  testless changes --from origin/main\n  testless select --from origin/main\n  testless select --from origin/main --format args\n  testless completion zsh > _testless"
 )]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
+}
+
+/// Output format for `select`. Defaults (when omitted) to `Json` on a piped
+/// stdout and `Text` on a terminal — the same TTY-sniffing convention as
+/// `index`/`stats`/`changes`. `Args` is never a default: it must be asked
+/// for explicitly with `--format args`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum Format {
+    Json,
+    Text,
+    /// Runner-consumable command lines (`vitest run ...`, `go test ...`,
+    /// `cargo test ...`) — one per selected test, via `format::command_lines`.
+    Args,
 }
 
 #[derive(Subcommand)]
@@ -41,6 +57,21 @@ enum Cmd {
         /// `--from` against the worktree.
         #[arg(long)]
         to: Option<String>,
+    },
+    /// Select the tests impacted by what changed since `--from` (or a
+    /// run-all fallback) and print them.
+    Select {
+        /// Revision to diff from. Compared against the current worktree.
+        #[arg(long, default_value = "HEAD")]
+        from: String,
+        /// Revision to diff to. Not yet supported — v1 only diffs
+        /// `--from` against the worktree.
+        #[arg(long)]
+        to: Option<String>,
+        /// Output format. Defaults to `json` when stdout is piped, `text`
+        /// when it's a terminal.
+        #[arg(long, value_enum)]
+        format: Option<Format>,
     },
     /// Generate a shell completion script and print it to stdout.
     Completion {
@@ -208,19 +239,27 @@ fn seed_kind_label(kind: SeedKind) -> &'static str {
     }
 }
 
-/// `--from <rev>` diffed against the current worktree, classified into
-/// impact seeds (or a run-all fallback). Returns the process exit code: 0
-/// for a selection (including an empty one), 2 for run-all. Failure to list
-/// changed files (bad rev, `git` missing, an unrecognized git status token)
-/// degrades to a run-all fallback (exit 2) rather than a hard error — see
-/// Item 2. Exit 1 stays reserved for index/cache infrastructure failures
-/// (indexing the repo, saving the cache), which are still surfaced as `Err`
-/// so `main` reports them.
-fn cmd_changes(from: String, to: Option<String>) -> Result<i32> {
-    if to.is_some() {
-        anyhow::bail!("--to is not yet supported (v1 only diffs --from against the worktree)");
-    }
-
+/// Shared `--from <rev>` pipeline for `changes` and `select`: incrementally
+/// (re)indexes the repo, diffs the worktree against `from`, classifies the
+/// change into a `ChangeMode`, and saves the (possibly freshly-parsed)
+/// cache — deliberately in that order.
+///
+/// `changed_files`/`classify` must run against the on-disk worktree before
+/// the cache is (re)written: saving first would leave a freshly-created (or
+/// freshly-modified) `.testless/graph.bin` sitting in the worktree, which
+/// `git ls-files --others` would then report as an untracked "changed" file
+/// in any repo that hasn't gitignored `.testless/` yet — polluting both the
+/// `changed_files` stat and (harmlessly, but wastefully) the importer scan.
+///
+/// Failure to list changed files (bad rev, `git` missing, an unrecognized
+/// git status token) degrades to a run-all fallback rather than a hard
+/// error — see Item 2 on `cmd_changes`'s original doc comment; callers
+/// still map that to a distinct exit code, not a `main`-reported `Err`.
+///
+/// Returns the graph, its cached per-file extractions, the classification,
+/// and the count of files `changed_files` reported (0 on the degrade-to-
+/// run-all path) — the last used only for stats reporting by callers.
+fn analyze(from: &str) -> Result<(Graph, Vec<CachedExtraction>, ChangeMode, usize)> {
     let cwd = std::env::current_dir().context("getting current directory")?;
     let reg = registry();
     let cache = cache_for(&cwd);
@@ -229,17 +268,10 @@ fn cmd_changes(from: String, to: Option<String>) -> Result<i32> {
     let (graph, extractions, _stats) =
         index_repo_incremental(&cwd, &reg, prev).context("indexing repo")?;
 
-    // `changed_files`/`classify` run against the on-disk worktree before the
-    // cache is (re)written: saving first would leave a freshly-created (or
-    // freshly-modified) `.testless/graph.bin` sitting in the worktree, which
-    // `git ls-files --others` would then report as an untracked "changed"
-    // file in any repo that hasn't gitignored `.testless/` yet — polluting
-    // both the `changed_files` stat and (harmlessly, but wastefully) the
-    // importer scan.
-    let (mode, changed_count) = match gitio::changed_files(&cwd, &from, None) {
+    let (mode, changed_count) = match gitio::changed_files(&cwd, from, None) {
         Ok(changed) => {
             let mode = classify(&cwd, &graph, &reg, &changed, &extractions, &|p| {
-                gitio::show_file(&cwd, &from, p)
+                gitio::show_file(&cwd, from, p)
             });
             (mode, changed.len())
         }
@@ -250,6 +282,22 @@ fn cmd_changes(from: String, to: Option<String>) -> Result<i32> {
     };
 
     cache.save(&graph, &extractions).context("saving cache")?;
+
+    Ok((graph, extractions, mode, changed_count))
+}
+
+/// `--from <rev>` diffed against the current worktree, classified into
+/// impact seeds (or a run-all fallback). Returns the process exit code: 0
+/// for a selection (including an empty one), 2 for run-all. Exit 1 stays
+/// reserved for index/cache infrastructure failures (indexing the repo,
+/// saving the cache), which are still surfaced as `Err` so `main` reports
+/// them.
+fn cmd_changes(from: String, to: Option<String>) -> Result<i32> {
+    if to.is_some() {
+        anyhow::bail!("--to is not yet supported (v1 only diffs --from against the worktree)");
+    }
+
+    let (graph, _extractions, mode, changed_count) = analyze(&from)?;
 
     let exit_code = match &mode {
         ChangeMode::Selection(_) => 0,
@@ -314,6 +362,156 @@ fn cmd_changes(from: String, to: Option<String>) -> Result<i32> {
     Ok(exit_code)
 }
 
+/// The test-runner label for a def's file language, per the `select` wire
+/// contract: `ts` -> `vitest`, `go` -> `gotest`, `rust` -> `cargo`. Any
+/// other/future registered language degrades to `"unknown"` rather than
+/// erroring — a missing runner mapping shouldn't crash test selection.
+fn runner_for_lang(lang: &str) -> &'static str {
+    match lang {
+        "ts" => "vitest",
+        "go" => "gotest",
+        "rust" => "cargo",
+        _ => "unknown",
+    }
+}
+
+/// One selected test, ready to render in either `select` output format.
+struct SelectedTest {
+    file: std::path::PathBuf,
+    /// The full `test_id` chain (e.g. `["add", "handles negatives"]`), or
+    /// (for the vanishingly rare def with no `test_id`) a single-segment
+    /// fallback of the def's own name.
+    name: Vec<String>,
+    runner: &'static str,
+    lang: String,
+    /// Mirrors `Def::computed_name`: set when any segment of `name` was
+    /// truncated because a later segment couldn't be statically resolved
+    /// (e.g. a template-literal test title) — consumers should widen their
+    /// match pattern rather than expect an exact `name` match.
+    computed: bool,
+}
+
+/// `--from <rev>` diffed against the current worktree, classified, and
+/// (for a `Selection`) walked out to the impacted `TestCase` defs via
+/// `walk::impacted_tests`. Returns the process exit code: 0 for a
+/// selection (including an empty one), 2 for run-all — mirroring
+/// `cmd_changes`'s exit-code contract exactly.
+fn cmd_select(from: String, to: Option<String>, format: Option<Format>) -> Result<i32> {
+    if to.is_some() {
+        anyhow::bail!("--to is not yet supported (v1 only diffs --from against the worktree)");
+    }
+
+    let (graph, _extractions, mode, changed_count) = analyze(&from)?;
+    // `--format` always wins; omitted, it sniffs the TTY like `changes`
+    // does. `Args` is never the sniffed default — it must be requested.
+    let resolved_format = format.unwrap_or_else(|| {
+        if std::io::stdout().is_terminal() {
+            Format::Text
+        } else {
+            Format::Json
+        }
+    });
+
+    let seeds = match mode {
+        ChangeMode::Selection(seeds) => seeds,
+        ChangeMode::RunAll { reason } => {
+            match resolved_format {
+                Format::Text => println!("run all: {reason}"),
+                Format::Json => {
+                    let out = serde_json::json!({
+                        "version": 1,
+                        "mode": "run_all",
+                        "reason": reason,
+                    });
+                    println!("{out}");
+                }
+                // `args`'s stdout contract is "runner-consumable command
+                // lines, nothing else" — a run-all reason isn't one of
+                // those, so it goes to stderr instead, same as the
+                // selection footer below.
+                Format::Args => eprintln!("run all: {reason}"),
+            }
+            return Ok(2);
+        }
+    };
+
+    let total_known = count_tests(&graph);
+    let seed_count = seeds.len();
+    let test_defs = impacted_tests(&graph, &seeds);
+    let tests: Vec<SelectedTest> = test_defs
+        .into_iter()
+        .map(|id| {
+            let def = graph.def(id);
+            let file = &graph.files[def.file.0 as usize];
+            SelectedTest {
+                file: file.path.clone(),
+                name: def
+                    .test_id
+                    .clone()
+                    .unwrap_or_else(|| vec![def.name.clone()]),
+                runner: runner_for_lang(&file.lang),
+                lang: file.lang.clone(),
+                computed: def.computed_name,
+            }
+        })
+        .collect();
+
+    match resolved_format {
+        Format::Text => {
+            for t in &tests {
+                println!("{} :: {}", t.file.display(), t.name.join(" > "));
+            }
+            eprintln!(
+                "selected {}/{} tests ({} seeds, {} changed files)",
+                tests.len(),
+                total_known,
+                seed_count,
+                changed_count
+            );
+        }
+        Format::Json => {
+            let tests_json: Vec<_> = tests
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "file": t.file,
+                        "name": t.name,
+                        "runner": t.runner,
+                        "lang": t.lang,
+                        "computed": t.computed,
+                    })
+                })
+                .collect();
+            let out = serde_json::json!({
+                "version": 1,
+                "mode": "selection",
+                "tests": tests_json,
+                "stats": {
+                    "total_known": total_known,
+                    "selected": tests.len(),
+                    "seeds": seed_count,
+                    "changed_files": changed_count,
+                },
+            });
+            println!("{out}");
+        }
+        Format::Args => {
+            for line in format::command_lines(&tests) {
+                println!("{line}");
+            }
+            eprintln!(
+                "selected {}/{} tests ({} seeds, {} changed files)",
+                tests.len(),
+                total_known,
+                seed_count,
+                changed_count
+            );
+        }
+    }
+
+    Ok(0)
+}
+
 fn cmd_completion(shell: clap_complete::Shell) -> Result<()> {
     clap_complete::generate(
         shell,
@@ -330,6 +528,7 @@ fn main() {
         Cmd::Index { full } => cmd_index(full).map(|()| 0),
         Cmd::Stats => cmd_stats().map(|()| 0),
         Cmd::Changes { from, to } => cmd_changes(from, to),
+        Cmd::Select { from, to, format } => cmd_select(from, to, format),
         Cmd::Completion { shell } => cmd_completion(shell).map(|()| 0),
     };
 
