@@ -144,9 +144,20 @@ h2 {
 }
 
 .tagline {
-  font-size: clamp(2rem, 5vw, 3.25rem);
-  margin: 0 auto 20px;
-  max-width: 20ch;
+  font-size: clamp(2rem, 4.4vw, 3.1rem);
+  margin: 0 auto 16px;
+  max-width: 27ch;
+}
+
+.proof-line {
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  font-weight: 600;
+  background: var(--gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  margin: 0 auto 24px;
 }
 
 .subline {
@@ -239,6 +250,8 @@ h2 {
   white-space: nowrap;
   font-size: 0.8rem;
   -webkit-overflow-scrolling: touch;
+  mask-image: linear-gradient(to right, black calc(100% - 28px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 28px), transparent 100%);
 }
 
 .binaries-note {

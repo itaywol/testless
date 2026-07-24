@@ -6,7 +6,7 @@
   <br>
 </p>
 
-<p align="center">Run 5 tests instead of 500. Test-impact analysis that reads your code, not your coverage.</p>
+<p align="center">Cut your test time to the minimum. Run 5 tests instead of 500 by reading your code, not your coverage.</p>
 
 <div align="center">
 

@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 90" role="img" aria-labelledby="testless-logo-dark-title">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-6 -5 259 95" role="img" aria-labelledby="testless-logo-dark-title">
   <title id="testless-logo-dark-title">testless</title>
   <defs>
     <linearGradient id="tl-grad-dark" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -15,5 +15,4 @@
     letter-spacing="-1"
     fill="#f5f5f7"
   >test<tspan fill="url(#tl-grad-dark)">less</tspan></text>
-  <line x1="180" y1="38" x2="352" y2="38" stroke="url(#tl-grad-dark)" stroke-width="4" stroke-linecap="round" opacity="0.85" />
 </svg>
