@@ -5,6 +5,8 @@ edition.workspace = true
 description = "testless graph core"
 repository.workspace = true
 license.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 anyhow = "1.0.104"

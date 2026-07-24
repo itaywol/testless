@@ -17,6 +17,7 @@ use testless_core::Registry;
 #[derive(Parser)]
 #[command(
     name = "testless",
+    version,
     after_help = "Examples:\n  testless index\n  testless stats\n  testless changes --from origin/main\n  testless select --from origin/main\n  testless select --from origin/main --format args\n  testless completion zsh > _testless"
 )]
 struct Cli {

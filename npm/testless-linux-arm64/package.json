@@ -1,0 +1,19 @@
+{
+  "name": "testless-linux-arm64",
+  "version": "0.0.0-managed",
+  "description": "testless prebuilt binary for linux arm64 (do not depend on this directly, install \"testless\" instead)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/itaywol/testless.git"
+  },
+  "license": "MIT",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/"
+  ]
+}
