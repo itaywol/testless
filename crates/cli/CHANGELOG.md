@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.5.0](https://github.com/itaywol/testless/compare/testless-v0.4.0...testless-v0.5.0) (2026-07-24)
+
+
+### Features
+
+* **cli:** args format — runner-consumable invocations ([6ae477c](https://github.com/itaywol/testless/commit/6ae477c146661b23c956bbe73792f71c73754e69))
+* **cli:** select command — impacted-test selection output ([2a5a657](https://github.com/itaywol/testless/commit/2a5a657576a02a3a515291461a76666e5989ea24))
+
+
+### Bug Fixes
+
+* **cli:** shell-safe args output; spec/docs reconciliation ([3d84579](https://github.com/itaywol/testless/commit/3d84579605ca1284778168f8b60e298240d34dad))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * testless-core bumped from 0.4.0 to 0.5.0
+    * testless-lang-ts bumped from 0.4.0 to 0.5.0
+    * testless-lang-go bumped from 0.4.0 to 0.5.0
+    * testless-lang-rust bumped from 0.4.0 to 0.5.0
+
 ## [0.4.0](https://github.com/itaywol/testless/compare/testless-v0.3.0...testless-v0.4.0) (2026-07-23)
 
 
