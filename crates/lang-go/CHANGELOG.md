@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0](https://github.com/itaywol/testless/compare/testless-lang-go-v0.4.0...testless-lang-go-v0.5.0) (2026-07-24)
+
+
+### Miscellaneous Chores
+
+* **testless-lang-go:** Synchronize testless versions
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * testless-core bumped from 0.4.0 to 0.5.0
+
 ## [0.4.0](https://github.com/itaywol/testless/compare/testless-lang-go-v0.3.0...testless-lang-go-v0.4.0) (2026-07-23)
 
 

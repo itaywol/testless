@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/itaywol/testless/compare/testless-core-v0.4.0...testless-core-v0.5.0) (2026-07-24)
+
+
+### Features
+
+* **cli:** select command — impacted-test selection output ([2a5a657](https://github.com/itaywol/testless/commit/2a5a657576a02a3a515291461a76666e5989ea24))
+* **core:** reverse-reachability impact walk with widening rules ([dc94950](https://github.com/itaywol/testless/commit/dc94950613f6c6a69b7b360b790ddddabd89008f))
+
+
+### Bug Fixes
+
+* **core:** enqueue module-init-widened tests so they propagate ([4221758](https://github.com/itaywol/testless/commit/4221758fb453990bbdebdeb81be2e1e7f6cfa0d5))
+
 ## [0.4.0](https://github.com/itaywol/testless/compare/testless-core-v0.3.0...testless-core-v0.4.0) (2026-07-23)
 
 
