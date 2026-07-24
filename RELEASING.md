@@ -13,9 +13,6 @@ provenance) and falls back to `NPM_TOKEN` when OIDC is not configured.
 
 ## Secrets
 
-| Secret | Purpose |
-|---|---|
-| `CARGO_REGISTRY_TOKEN` | crates.io publish (crates.io has no OIDC yet) |
-
-npm publishing uses trusted publishing (OIDC) with automatic provenance and
-needs no secret.
+Both registries publish via trusted publishing (OIDC): npm with automatic
+provenance, crates.io through rust-lang/crates-io-auth-action. No long-lived
+publish secrets exist.
