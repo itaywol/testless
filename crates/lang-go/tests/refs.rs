@@ -23,6 +23,23 @@ fn extracts_cross_package_calls() {
 }
 
 #[test]
+fn aliased_import_qualifier_is_recorded_as_known_name() {
+    let src = r#"package p
+
+import foo "example.com/go-app/calc"
+
+func Fmt() int {
+	return foo.Something
+}
+"#;
+    let ex = extract(src);
+    let f = ex.defs.iter().position(|d| d.name == "Fmt").unwrap();
+    assert!(ex.reads.iter().any(|r| r.name == "Something"
+        && r.qualifier.as_deref() == Some("foo")
+        && r.from_def == f));
+}
+
+#[test]
 fn non_testing_run_is_plain_call_not_subtest() {
     let src = r#"package p
 
