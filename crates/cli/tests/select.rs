@@ -591,7 +591,9 @@ mod tests {
 ";
 
 const RUST_FMT_RS: &str = "\
-pub fn fmt(a: i64, b: i64) -> String { format!(\"{}\", crate::math::add(a, b)) }
+use crate::math::add;
+
+pub fn fmt(a: i64, b: i64) -> String { format!(\"{}\", add(a, b)) }
 
 #[cfg(test)]
 mod tests {

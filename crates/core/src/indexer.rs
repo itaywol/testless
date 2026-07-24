@@ -185,14 +185,19 @@ pub fn index_repo_incremental(
 
     // Pass 3: resolve calls/reads to tier-1 candidates. Scope for a ref in
     // file F is F itself plus every file F `Imports` (reusing `seen`, which
-    // pass 2 already built as exactly that from/to set). Defs are indexed
-    // under their *short* name: a method def like `Calc.push` is indexed
-    // under `push` too, so a bare-identifier ref matches both plain
-    // functions and qualified methods whether or not `ref.qualifier` is
-    // set (the receiver variable rarely equals the type name, so this is a
-    // deliberate over-approximation). `ModuleInit` defs (name `<module>`)
-    // are excluded from candidacy since nothing ever references them by
-    // name.
+    // pass 2 already built as exactly that from/to set) plus, for Go only,
+    // every sibling file in F's own package directory (see the `lang.id()
+    // == "go"` scope extension below): Go's unit of visibility is the
+    // package, not the file, and a file can never `import` its own
+    // package, so cross-file same-package calls would otherwise always
+    // resolve as `Unknown` even though they're entirely unambiguous. Defs
+    // are indexed under their *short* name: a method def like `Calc.push`
+    // is indexed under `push` too, so a bare-identifier ref matches both
+    // plain functions and qualified methods whether or not `ref.qualifier`
+    // is set (the receiver variable rarely equals the type name, so this
+    // is a deliberate over-approximation). `ModuleInit` defs (name
+    // `<module>`) are excluded from candidacy since nothing ever
+    // references them by name.
     let mut imports_of: HashMap<FileId, Vec<FileId>> = HashMap::new();
     for (from, to) in &seen {
         imports_of.entry(*from).or_default().push(*to);
@@ -222,10 +227,18 @@ pub fn index_repo_incremental(
     for (file_idx, extraction) in extractions.iter().enumerate() {
         let file_id = FileId(file_idx as u32);
         let base = file_def_base[file_idx];
+        let (rel_path, lang) = &files[file_idx];
 
         let mut scope: Vec<FileId> = vec![file_id];
         if let Some(targets) = imports_of.get(&file_id) {
             scope.extend(targets.iter().copied());
+        }
+        if lang.id() == "go" {
+            if let Some(dir) = rel_path.parent() {
+                if let Some(siblings) = dir_to_files.get(dir) {
+                    scope.extend(siblings.iter().copied().filter(|&f| f != file_id));
+                }
+            }
         }
         let candidates_for = |name: &str| -> Vec<DefId> {
             scope

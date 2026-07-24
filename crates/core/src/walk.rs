@@ -16,7 +16,23 @@
 //!   file's (and its transitive importers') tests.
 //! - `Calls{from, to: Unknown(name)}` where `name == short_name(D)` ->
 //!   `from` is impacted (an unresolved call that could dynamically dispatch
-//!   to D).
+//!   to D), PROVIDED D's file is reachable from the caller's file through
+//!   the forward transitive import closure (the caller's file imports,
+//!   directly or indirectly, D's file), or they're the same file. Why this
+//!   scoping is sound: tier-1 name resolution for a ref in file C only
+//!   ever looks at C's own file plus its direct imports; a ref is left
+//!   `Unknown` either because the callee is external (not in the repo
+//!   graph at all) or because the name would only resolve through an
+//!   import chain longer than one hop that tier-1 didn't attempt, or
+//!   through re-export indirection. In every one of those cases, the only
+//!   files C could possibly be naming a callee in are C's own file and
+//!   every file reachable from C by following `Imports` edges forward
+//!   (transitively) — that's precisely our import-edge model's full
+//!   picture of "names C could plausibly see". A def living in a file C's
+//!   import graph can't reach is a def whose name could never have entered
+//!   C's resolution scope under our model, so excluding it drops only
+//!   noise (an unrelated same-named def somewhere unconnected in the
+//!   repo), never a real ambiguous callee.
 //! - If D is a `ModuleInit`: every file in the transitive importer closure
 //!   of D's file (including D's own file) has its `ModuleInit` enqueued and
 //!   its `TestCase` defs enqueued too (not just collected; a widened test
@@ -29,6 +45,7 @@
 //! through them: a test helper (itself a `TestCase`) that's called by other
 //! tests must keep propagating impact to those callers.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::classify::Seed;
@@ -96,7 +113,10 @@ pub fn impacted_tests(graph: &Graph, seeds: &[Seed]) -> Vec<DefId> {
         }
         if let Some(unknown_callers) = index.unknown_by_name.get(short_name(&def.name)) {
             for &c in unknown_callers {
-                enqueue(&mut queue, &mut visited, c);
+                let caller_file = graph.def(c).file;
+                if index.imports_reach(caller_file, def.file) {
+                    enqueue(&mut queue, &mut visited, c);
+                }
             }
         }
 
@@ -153,6 +173,16 @@ struct ReverseIndex<'g> {
     /// `Imports{from, to}` -> `importers[to] = [from, ...]` (files that
     /// import `to`, i.e. `to`'s importers).
     importers: HashMap<FileId, Vec<FileId>>,
+    /// `Imports{from, to}` -> `imports_fwd[from] = [to, ...]` (files that
+    /// `from` imports directly). The forward counterpart of `importers`;
+    /// used to compute the forward transitive import closure for
+    /// `Unknown`-call widening (see `imports_reach`).
+    imports_fwd: HashMap<FileId, Vec<FileId>>,
+    /// Lazy, memoized cache of forward transitive import closures, keyed
+    /// by the file the closure was computed from. Populated on first use
+    /// by `imports_reach`; `RefCell` because `ReverseIndex` is otherwise
+    /// borrowed immutably for the whole walk.
+    forward_closures: RefCell<HashMap<FileId, HashSet<FileId>>>,
 }
 
 impl<'g> ReverseIndex<'g> {
@@ -162,6 +192,7 @@ impl<'g> ReverseIndex<'g> {
         let mut containers: HashMap<DefId, DefId> = HashMap::new();
         let mut unknown_by_name: HashMap<&str, Vec<DefId>> = HashMap::new();
         let mut importers: HashMap<FileId, Vec<FileId>> = HashMap::new();
+        let mut imports_fwd: HashMap<FileId, Vec<FileId>> = HashMap::new();
 
         for edge in &graph.edges {
             match edge {
@@ -180,7 +211,10 @@ impl<'g> ReverseIndex<'g> {
                 Edge::Contains { parent, child } => {
                     containers.insert(*child, *parent);
                 }
-                Edge::Imports { from, to } => importers.entry(*to).or_default().push(*from),
+                Edge::Imports { from, to } => {
+                    importers.entry(*to).or_default().push(*from);
+                    imports_fwd.entry(*from).or_default().push(*to);
+                }
             }
         }
 
@@ -190,7 +224,46 @@ impl<'g> ReverseIndex<'g> {
             containers,
             unknown_by_name,
             importers,
+            imports_fwd,
+            forward_closures: RefCell::new(HashMap::new()),
         }
+    }
+
+    /// Whether `to_file` is reachable from `from_file` through the forward
+    /// transitive import closure of `from_file` (`from_file` imports,
+    /// directly or indirectly, `to_file`), or they're the same file. Used
+    /// to scope `Unknown`-call widening to files the caller could
+    /// plausibly have resolved a name into; see the module doc comment.
+    /// The closure is computed by BFS over `imports_fwd` on first use per
+    /// `from_file` and memoized for the rest of the walk.
+    fn imports_reach(&self, from_file: FileId, to_file: FileId) -> bool {
+        if from_file == to_file {
+            return true;
+        }
+        if let Some(closure) = self.forward_closures.borrow().get(&from_file) {
+            return closure.contains(&to_file);
+        }
+
+        let mut visited: HashSet<FileId> = HashSet::new();
+        let mut queue: VecDeque<FileId> = VecDeque::new();
+        visited.insert(from_file);
+        queue.push_back(from_file);
+        while let Some(f) = queue.pop_front() {
+            if let Some(imps) = self.imports_fwd.get(&f) {
+                for &imp in imps {
+                    if visited.insert(imp) {
+                        queue.push_back(imp);
+                    }
+                }
+            }
+        }
+        visited.remove(&from_file);
+
+        let reaches = visited.contains(&to_file);
+        self.forward_closures
+            .borrow_mut()
+            .insert(from_file, visited);
+        reaches
     }
 
     /// The transitive closure of files that (directly or indirectly) import
@@ -501,6 +574,61 @@ mod tests {
         });
 
         let result = impacted_tests(&g, &[seed(push_method)]);
+        assert_eq!(result, vec![t]);
+    }
+
+    #[test]
+    fn unknown_widening_respects_import_reachability() {
+        // File A: test T with Calls{Unknown("foo")}. File B: def foo. With
+        // no import edge from A to B, B is not in A's forward transitive
+        // import closure and A != B, so T must NOT be selected. Adding an
+        // Imports{from: A, to: B} edge brings B into A's closure, and T
+        // must then be selected.
+        let build = |with_import: bool| {
+            let mut g = g();
+            let fa = file(&mut g, "a.ts");
+            let fb = file(&mut g, "b.ts");
+            let foo = def(&mut g, "foo", DefKind::Function, fb);
+            let t = def(&mut g, "t", DefKind::TestCase, fa);
+            g.add_edge(Edge::Calls {
+                from: t,
+                to: CallTarget::Unknown("foo".into()),
+            });
+            if with_import {
+                g.add_edge(Edge::Imports { from: fa, to: fb });
+            }
+            (g, foo, t)
+        };
+
+        let (g_no_import, foo, _t) = build(false);
+        let result = impacted_tests(&g_no_import, &[seed(foo)]);
+        assert_eq!(result, Vec::<DefId>::new());
+
+        let (g_with_import, foo2, t2) = build(true);
+        let result = impacted_tests(&g_with_import, &[seed(foo2)]);
+        assert_eq!(result, vec![t2]);
+    }
+
+    #[test]
+    fn unknown_widening_transitive_imports() {
+        // A imports B imports C. Test T (in A) has Calls{Unknown("bar")};
+        // def bar lives in C. A's forward transitive import closure
+        // reaches C via A -> B -> C, even though A doesn't import C
+        // directly, so T must be selected.
+        let mut g = g();
+        let fa = file(&mut g, "a.ts");
+        let fb = file(&mut g, "b.ts");
+        let fc = file(&mut g, "c.ts");
+        let bar = def(&mut g, "bar", DefKind::Function, fc);
+        let t = def(&mut g, "t", DefKind::TestCase, fa);
+        g.add_edge(Edge::Calls {
+            from: t,
+            to: CallTarget::Unknown("bar".into()),
+        });
+        g.add_edge(Edge::Imports { from: fa, to: fb });
+        g.add_edge(Edge::Imports { from: fb, to: fc });
+
+        let result = impacted_tests(&g, &[seed(bar)]);
         assert_eq!(result, vec![t]);
     }
 
