@@ -19,7 +19,7 @@ use testless_core::Registry;
 #[command(
     name = "testless",
     version,
-    after_help = "Examples:\n  testless index\n  testless stats\n  testless changes --from origin/main\n  testless select --from origin/main\n  testless select --from origin/main --format args\n  testless why \"formats a sum\"\n  testless completion zsh > _testless"
+    after_help = "Examples:\n  testless index\n  testless stats\n  testless changes --from origin/main\n  testless select --from origin/main\n  testless select --from origin/main --format args\n  testless select --from v1.0.0 --to v1.1.0\n  testless why \"formats a sum\"\n  testless completion zsh > _testless"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -52,22 +52,30 @@ enum Cmd {
     /// Classify what changed since `--from` into impacted-def seeds (or a
     /// run-all fallback) and print them.
     Changes {
-        /// Revision to diff from. Compared against the current worktree.
+        /// Revision to diff from. Compared against `--to` (or, when `--to`
+        /// is omitted, the current worktree).
         #[arg(long, default_value = "HEAD")]
         from: String,
-        /// Revision to diff to. Not yet supported: v1 always compares
-        /// `--from` against the worktree.
+        /// Revision to diff to. When omitted, `--from` is compared against
+        /// the current worktree. When given, `--from`..`--to` is analyzed
+        /// as a snapshot: `--to` is checked out into a temporary git
+        /// worktree (removed again once the command finishes), so it must
+        /// already exist in the local object store (fetched, if remote).
         #[arg(long)]
         to: Option<String>,
     },
     /// Select the tests impacted by what changed since `--from` (or a
     /// run-all fallback) and print them.
     Select {
-        /// Revision to diff from. Compared against the current worktree.
+        /// Revision to diff from. Compared against `--to` (or, when `--to`
+        /// is omitted, the current worktree).
         #[arg(long, default_value = "HEAD")]
         from: String,
-        /// Revision to diff to. Not yet supported: v1 only diffs
-        /// `--from` against the worktree.
+        /// Revision to diff to. When omitted, `--from` is compared against
+        /// the current worktree. When given, `--from`..`--to` is analyzed
+        /// as a snapshot: `--to` is checked out into a temporary git
+        /// worktree (removed again once the command finishes), so it must
+        /// already exist in the local object store (fetched, if remote).
         #[arg(long)]
         to: Option<String>,
         /// Output format. Defaults to `json` when stdout is piped, `text`
@@ -82,9 +90,13 @@ enum Cmd {
         /// `<file> :: <name chain>` (e.g. a bare test name, a file path
         /// prefix, or the full `file :: chain` string all work).
         test_id: String,
-        /// Revision to diff from. Compared against the current worktree.
+        /// Revision to diff from. Compared against `--to` (or, when `--to`
+        /// is omitted, the current worktree).
         #[arg(long, default_value = "HEAD")]
         from: String,
+        /// Revision to diff to (see `select --to`/`changes --to`).
+        #[arg(long)]
+        to: Option<String>,
     },
     /// Generate a shell completion script and print it to stdout.
     Completion {
@@ -275,45 +287,86 @@ fn seed_kind_label(kind: SeedKind) -> &'static str {
     }
 }
 
-/// Shared `--from <rev>` pipeline for `changes` and `select`: incrementally
-/// (re)indexes the repo, diffs the worktree against `from`, classifies the
-/// change into a `ChangeMode`, and saves the (possibly freshly-parsed)
-/// cache, deliberately in that order.
+/// Shared `--from <rev>`[`--to <rev>`] pipeline for `changes`, `select`, and
+/// `why`: incrementally (re)indexes the repo, diffs against `from`,
+/// classifies the change into a `ChangeMode`, and saves the (possibly
+/// freshly-parsed) cache, deliberately in that order.
 ///
-/// `changed_files`/`classify` must run against the on-disk worktree before
-/// the cache is (re)written: saving first would leave a freshly-created (or
-/// freshly-modified) `.testless/graph.bin` sitting in the worktree, which
-/// `git ls-files --others` would then report as an untracked "changed" file
-/// in any repo that hasn't gitignored `.testless/` yet, polluting both the
+/// When `to` is `None` (the default), this is exactly the original
+/// `--from`-vs-worktree pipeline: `root` is the current directory, and
+/// `changed_files`/`classify` run against its on-disk (possibly dirty)
+/// state.
+///
+/// When `to` is `Some(rev)`, that revision is materialized into a temporary
+/// git worktree (`gitio::TempWorktree`, `git worktree add --detach`) and the
+/// *entire* pipeline — indexing, `testless.toml` loading, the cache — runs
+/// with that worktree's checkout as `root` instead: an ephemeral analysis of
+/// the `--to` snapshot that never touches the caller's actual worktree or
+/// its `.testless` cache. `changed_files`/`show_file`, which need repo
+/// history rather than a checkout, still run against the current directory
+/// (it has the same object store as the worktree, being a worktree of it).
+/// The temporary worktree is removed (via `TempWorktree`'s `Drop`) when this
+/// function returns, by any path, including an early `?`-propagated error.
+///
+/// `changed_files`/`classify` must run against `root`'s on-disk state before
+/// its cache is (re)written: saving first would leave a freshly-created (or
+/// freshly-modified) `.testless/graph.bin` sitting there, which `git
+/// ls-files --others` would then report as an untracked "changed" file in
+/// any repo that hasn't gitignored `.testless/` yet, polluting both the
 /// `changed_files` stat and (harmlessly, but wastefully) the importer scan.
 ///
 /// Failure to list changed files (bad rev, `git` missing, an unrecognized
 /// git status token) degrades to a run-all fallback rather than a hard
-/// error. See Item 2 on `cmd_changes`'s original doc comment; callers
-/// still map that to a distinct exit code, not a `main`-reported `Err`.
+/// error, as does a failure to materialize `--to` itself (bad/unfetched
+/// rev): both are transient/environmental, same posture as a bad `--from`.
+/// See Item 2 on `cmd_changes`'s original doc comment; callers still map
+/// that to a distinct exit code, not a `main`-reported `Err`.
 ///
 /// Returns the graph, its cached per-file extractions, the classification,
 /// the count of files `changed_files` reported (0 on the degrade-to-
 /// run-all path, used only for stats reporting by callers), and the loaded
-/// `testless.toml` config (empty defaults if none exists), so callers that
-/// need `always_run` (namely `select`/`why`) don't have to reload it.
-fn analyze(from: &str) -> Result<(Graph, Vec<CachedExtraction>, ChangeMode, usize, Config)> {
+/// `testless.toml` config (empty defaults if none exists, or if `--to`
+/// failed to materialize), so callers that need `always_run` (namely
+/// `select`/`why`) don't have to reload it.
+fn analyze(
+    from: &str,
+    to: Option<&str>,
+) -> Result<(Graph, Vec<CachedExtraction>, ChangeMode, usize, Config)> {
     let cwd = std::env::current_dir().context("getting current directory")?;
     let reg = registry();
-    let cache = cache_for(&cwd);
+
+    let worktree = match to {
+        None => None,
+        Some(to_rev) => match gitio::TempWorktree::create(&cwd, to_rev) {
+            Ok(wt) => Some(wt),
+            Err(err) => {
+                let reason = format!("materializing --to rev: {err:#}");
+                return Ok((
+                    Graph::default(),
+                    Vec::new(),
+                    ChangeMode::RunAll { reason },
+                    0,
+                    Config::default(),
+                ));
+            }
+        },
+    };
+    let root: &std::path::Path = worktree.as_ref().map_or(&cwd, |wt| wt.path());
+
+    let cache = cache_for(root);
     let prev = cache.load();
 
-    let config = load_config(&cwd)?;
+    let config = load_config(root)?;
     let ignore = config
         .ignore_globset()
         .context("parsing testless.toml ignore globs")?;
 
     let (graph, extractions, _stats) =
-        index_repo_incremental(&cwd, &reg, Some(&ignore), prev).context("indexing repo")?;
+        index_repo_incremental(root, &reg, Some(&ignore), prev).context("indexing repo")?;
 
-    let (mode, changed_count) = match gitio::changed_files(&cwd, from, None) {
+    let (mode, changed_count) = match gitio::changed_files(&cwd, from, to) {
         Ok(changed) => {
-            let mode = classify(&cwd, &graph, &reg, &changed, &extractions, &|p| {
+            let mode = classify(root, &graph, &reg, &changed, &extractions, &|p| {
                 gitio::show_file(&cwd, from, p)
             });
             (mode, changed.len())
@@ -336,11 +389,7 @@ fn analyze(from: &str) -> Result<(Graph, Vec<CachedExtraction>, ChangeMode, usiz
 /// saving the cache), which are still surfaced as `Err` so `main` reports
 /// them.
 fn cmd_changes(from: String, to: Option<String>) -> Result<i32> {
-    if to.is_some() {
-        anyhow::bail!("--to is not yet supported (v1 only diffs --from against the worktree)");
-    }
-
-    let (graph, _extractions, mode, changed_count, _config) = analyze(&from)?;
+    let (graph, _extractions, mode, changed_count, _config) = analyze(&from, to.as_deref())?;
 
     let exit_code = match &mode {
         ChangeMode::Selection(_) => 0,
@@ -460,11 +509,7 @@ struct SelectedTest {
 /// selection (including an empty one), 2 for run-all, mirroring
 /// `cmd_changes`'s exit-code contract exactly.
 fn cmd_select(from: String, to: Option<String>, format: Option<Format>) -> Result<i32> {
-    if to.is_some() {
-        anyhow::bail!("--to is not yet supported (v1 only diffs --from against the worktree)");
-    }
-
-    let (graph, _extractions, mode, changed_count, config) = analyze(&from)?;
+    let (graph, _extractions, mode, changed_count, config) = analyze(&from, to.as_deref())?;
     // `--format` always wins; omitted, it sniffs the TTY like `changes`
     // does. `Args` is never the sniffed default; it must be requested.
     let resolved_format = format.unwrap_or_else(|| {
@@ -735,8 +780,8 @@ fn why_json(graph: &Graph, candidate: &WhyCandidate) -> serde_json::Value {
 /// prints its path (exit 0). A run-all classification short-circuits with
 /// the same reason/exit-code (2) contract as `select`/`changes`: there's no
 /// specific walk to explain when everything runs.
-fn cmd_why(test_id: String, from: String) -> Result<i32> {
-    let (graph, _extractions, mode, _changed_count, config) = analyze(&from)?;
+fn cmd_why(test_id: String, from: String, to: Option<String>) -> Result<i32> {
+    let (graph, _extractions, mode, _changed_count, config) = analyze(&from, to.as_deref())?;
     let is_tty = std::io::stdout().is_terminal();
 
     let seeds = match mode {
@@ -865,7 +910,7 @@ fn main() {
         Cmd::Stats => cmd_stats().map(|()| 0),
         Cmd::Changes { from, to } => cmd_changes(from, to),
         Cmd::Select { from, to, format } => cmd_select(from, to, format),
-        Cmd::Why { test_id, from } => cmd_why(test_id, from),
+        Cmd::Why { test_id, from, to } => cmd_why(test_id, from, to),
         Cmd::Completion { shell } => cmd_completion(shell).map(|()| 0),
     };
 

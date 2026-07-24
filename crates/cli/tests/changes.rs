@@ -570,7 +570,6 @@ fn extensionless_import_matches_changed_file_by_stem() {
 
 mod cli_changes {
     use assert_cmd::Command;
-    use predicates::prelude::*;
 
     fn git(dir: &std::path::Path, args: &[&str]) {
         let status = std::process::Command::new("git")
@@ -700,17 +699,70 @@ mod cli_changes {
         assert!(json["reason"].as_str().unwrap().contains("--from"));
     }
 
-    /// `--to` isn't supported yet in v1: documented punt, hard error exit 1.
+    fn rev_parse(dir: &std::path::Path, rev: &str) -> String {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["rev-parse", rev])
+            .output()
+            .expect("failed to spawn git rev-parse");
+        assert!(output.status.success(), "git rev-parse {rev} failed");
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    }
+
+    /// `--to <rev>` (issue #17): an explicit `--from`..`--to` rev range
+    /// (rather than `--from` vs. the worktree) reports exactly the seed for
+    /// a body edit committed between the two revisions.
     #[test]
-    fn to_flag_is_rejected() {
+    fn to_flag_reports_seed_for_rev_range() {
         let tmp = init_repo();
-        Command::cargo_bin("testless")
+        let root = tmp.path();
+        let c1 = rev_parse(root, "HEAD");
+
+        std::fs::write(
+            root.join("src/math.ts"),
+            "export function add(a: number, b: number): number { return a + b + 1; }\n",
+        )
+        .unwrap();
+        git(root, &["commit", "-am", "edit add's body"]);
+        let c2 = rev_parse(root, "HEAD");
+
+        let assert = Command::cargo_bin("testless")
             .unwrap()
-            .args(["changes", "--to", "HEAD"])
+            .args(["changes", "--from", &c1, "--to", &c2])
+            .current_dir(root)
+            .assert()
+            .success();
+        let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+        let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| {
+            panic!("expected JSON stdout, got {out:?} ({e})");
+        });
+        assert_eq!(json["mode"], "selection");
+        let seeds = json["seeds"].as_array().expect("seeds array");
+        assert!(
+            seeds
+                .iter()
+                .any(|s| s["def"] == "add" && s["kind"] == "body"),
+            "expected an add/body seed, got {seeds:?}"
+        );
+    }
+
+    /// A `--to` rev that doesn't resolve locally degrades to the same
+    /// `run_all`/exit-2 fallback as a bad `--from` rev, rather than a hard
+    /// error.
+    #[test]
+    fn bad_to_rev_degrades_to_run_all_exit_2() {
+        let tmp = init_repo();
+        let assert = Command::cargo_bin("testless")
+            .unwrap()
+            .args(["changes", "--to", "not-a-real-rev"])
             .current_dir(tmp.path())
             .assert()
-            .code(1)
-            .stderr(predicate::str::contains("not yet supported"));
+            .code(2);
+        let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+        let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(json["mode"], "run_all");
+        assert!(json["reason"].as_str().unwrap().contains("--to"));
     }
 
     // --- multi-language e2e coverage (Plan 3, Task 6) ------------------

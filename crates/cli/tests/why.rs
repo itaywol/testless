@@ -182,3 +182,60 @@ fn why_config_file_edit_forces_run_all_exit_2() {
         .assert()
         .code(2);
 }
+
+fn rev_parse(dir: &std::path::Path, rev: &str) -> String {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", rev])
+        .output()
+        .expect("failed to spawn git rev-parse");
+    assert!(output.status.success(), "git rev-parse {rev} failed");
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+/// `--to <rev>` (issue #17): `why` explains the same `add -> fmt ->
+/// "formats a sum"` path when given an explicit `--from C1 --to C2` rev
+/// range instead of `--from` vs. the live worktree.
+#[test]
+fn why_explains_path_with_to_flag_rev_range() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    // See `select.rs`'s `init_to_range_repo` for why this nonce matters:
+    // without it, two parallel test processes committing byte-identical
+    // content within the same wall-clock second would hash to the same
+    // commit sha and race on the same `--to` temp worktree path.
+    std::fs::write(root.join(".nonce"), root.display().to_string()).unwrap();
+    std::fs::write(
+        root.join("package.json"),
+        "{ \"name\": \"why-to-fixture\" }\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("src/math.ts"), MATH_TS).unwrap();
+    std::fs::write(root.join("src/format.ts"), FORMAT_TS).unwrap();
+    std::fs::write(root.join("src/math.test.ts"), MATH_TEST_TS).unwrap();
+    std::fs::write(root.join("src/format.test.ts"), FORMAT_TEST_TS).unwrap();
+    git(root, &["init", "-b", "main"]);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-m", "C1: baseline"]);
+    let c1 = rev_parse(root, "HEAD");
+
+    std::fs::write(root.join("src/math.ts"), MATH_TS_BODY_EDITED).unwrap();
+    git(root, &["commit", "-am", "C2: edit add's body"]);
+    let c2 = rev_parse(root, "HEAD");
+
+    let assert = Command::cargo_bin("testless")
+        .unwrap()
+        .args(["why", "formats", "--from", &c1, "--to", &c2])
+        .current_dir(root)
+        .assert()
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+
+    assert!(out.contains("add"), "expected the changed def in {out:?}");
+    assert!(
+        out.contains("formats a sum"),
+        "expected the matched test's name in {out:?}"
+    );
+}

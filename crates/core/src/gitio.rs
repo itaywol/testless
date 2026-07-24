@@ -163,6 +163,116 @@ pub fn show_file(repo: &Path, rev: &str, path: &Path) -> Result<Option<String>> 
     bail!("git show {spec} failed: {}", stderr.trim());
 }
 
+/// Resolves `rev` to its full object id (`git rev-parse --verify <rev>`),
+/// used to build a collision-safe [`TempWorktree`] directory name. `Err` for
+/// a rev that doesn't resolve locally (bad rev, or one that exists remotely
+/// but hasn't been fetched) — the same failure shape `changed_files` already
+/// has for a bad `--from`.
+fn resolve_rev(repo: &Path, rev: &str) -> Result<String> {
+    let output = run_git(repo, &["rev-parse", "--verify", rev])?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("git rev-parse --verify {rev} failed: {}", stderr.trim());
+    }
+    let sha =
+        String::from_utf8(output.stdout).context("git rev-parse output is not valid UTF-8")?;
+    Ok(sha.trim().to_string())
+}
+
+/// A temporary, detached-HEAD git worktree checked out at an arbitrary
+/// revision (`git worktree add --detach <dir> <rev>`), backing `--to <rev>`
+/// support: the analysis pipeline runs against this checkout as its repo
+/// root instead of the caller's actual worktree, so `--from`/`--to` can name
+/// any two revisions rather than only `--from` vs. the live worktree.
+///
+/// Lives at `$TMPDIR/testless-to-<full-sha-of-rev>`: the sha suffix (not the
+/// raw `rev` string, which might not be filesystem-safe, e.g. `origin/main`)
+/// makes the location deterministic and collision-safe across concurrent
+/// runs against the same rev.
+///
+/// Removed on drop (`git worktree remove --force`, then `git worktree
+/// prune`) — including on an early return via `?` anywhere between creation
+/// and drop — via a hand-rolled `Drop` guard rather than an explicit cleanup
+/// call at every exit path (no `scopeguard` dependency in this crate).
+#[derive(Debug)]
+pub struct TempWorktree {
+    path: PathBuf,
+    repo: PathBuf,
+}
+
+impl TempWorktree {
+    /// Requires `rev` to already exist in `repo`'s local object store: a
+    /// rev that hasn't been fetched surfaces as an `Err` here (see
+    /// `resolve_rev`), not a silent no-op.
+    pub fn create(repo: &Path, rev: &str) -> Result<Self> {
+        let sha = resolve_rev(repo, rev).with_context(|| format!("resolving --to rev {rev:?}"))?;
+        let path = std::env::temp_dir().join(format!("testless-to-{sha}"));
+
+        // A leftover directory/registration from a previous crashed or
+        // force-killed run would otherwise make `git worktree add` fail
+        // outright and permanently wedge every future `--to <same rev>`
+        // run; best-effort clear both before adding. Failures here are
+        // expected (nothing to clear) and intentionally ignored.
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["worktree", "remove", "--force"])
+            .arg(&path)
+            .output();
+        let _ = std::fs::remove_dir_all(&path);
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["worktree", "add", "--detach"])
+            .arg(&path)
+            .arg(rev)
+            .output()
+            .with_context(|| format!("failed to run `git worktree add` for rev {rev:?}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!(
+                "git worktree add --detach {} {rev} failed: {}",
+                path.display(),
+                stderr.trim()
+            );
+        }
+
+        Ok(Self {
+            path,
+            repo: repo.to_path_buf(),
+        })
+    }
+
+    /// The checkout directory: the analysis pipeline's repo root for the
+    /// `--to` rev, valid for exactly as long as `self` is alive.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempWorktree {
+    fn drop(&mut self) {
+        // Best-effort: a `Drop` impl can't propagate an error, and a
+        // cleanup failure (e.g. the directory already gone) shouldn't panic
+        // mid-unwind. `worktree remove --force` deletes the checkout
+        // directory itself; `worktree prune` clears the (now-dangling)
+        // registration in `repo`'s `.git/worktrees/` in the rare case
+        // `remove` didn't run (e.g. the directory was already gone).
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(&self.repo)
+            .args(["worktree", "remove", "--force"])
+            .arg(&self.path)
+            .output();
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(&self.repo)
+            .args(["worktree", "prune"])
+            .output();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,5 +395,41 @@ mod tests {
             FileStatus::Renamed { old } => assert_eq!(old, &PathBuf::from("a.txt")),
             other => panic!("expected Renamed, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn temp_worktree_checks_out_rev_content_and_cleans_up_on_drop() {
+        let dir = init_repo();
+        fs::write(dir.path().join("a.txt"), "second\n").unwrap();
+        git(dir.path(), &["commit", "-am", "second commit"]);
+
+        let path = {
+            let wt = TempWorktree::create(dir.path(), "HEAD~1").expect("create worktree");
+            let checked_out = fs::read_to_string(wt.path().join("a.txt")).expect("read a.txt");
+            assert_eq!(
+                checked_out, "original\n",
+                "worktree should have HEAD~1's content, not HEAD's"
+            );
+            assert!(wt.path().exists());
+            wt.path().to_path_buf()
+        };
+        // Dropped at end of the block above; the checkout directory must be
+        // gone, and the registration pruned (a second `create` against the
+        // same rev must succeed cleanly, not collide with a stale entry).
+        assert!(
+            !path.exists(),
+            "worktree directory should be removed after drop, still at {}",
+            path.display()
+        );
+
+        let wt2 = TempWorktree::create(dir.path(), "HEAD~1").expect("recreate worktree");
+        assert_eq!(wt2.path(), path, "same rev resolves to the same temp path");
+    }
+
+    #[test]
+    fn temp_worktree_bad_rev_is_err() {
+        let dir = init_repo();
+        let result = TempWorktree::create(dir.path(), "not-a-real-rev");
+        assert!(result.is_err(), "expected Err for bad rev, got {result:?}");
     }
 }

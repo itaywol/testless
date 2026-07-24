@@ -380,18 +380,240 @@ fn config_file_edit_forces_run_all_exit_2() {
     assert!(json["reason"].as_str().unwrap().contains("package.json"));
 }
 
-/// `--to` isn't supported yet in v1: documented punt, hard error exit 1;
-/// mirrors `changes`'s identical rejection.
+// ---------------------------------------------------------------------
+// `--to <rev>` (issue #17): analyze an arbitrary `--from`..`--to` rev
+// range instead of `--from` vs. the live worktree, by materializing `--to`
+// in a temporary git worktree and running the whole pipeline rooted there.
+//
+// Fixture: three commits.
+// - C1: baseline, `src/math.ts` (`add` + `unrelatedHelper`) and
+//   `src/greet.ts` (`greet`), each with its own test file.
+// - C2: edits `add`'s body only.
+// - C3: (on top of C2) edits `greet`'s body only.
+//
+// `--from C1 --to C2` must select only `add`'s two tests (the range
+// contains no `greet` change at all, even though `greet.ts` in the C2
+// worktree is untouched relative to C1); `--from C1 --to C3` must select
+// both `add`'s and `greet`'s tests, since both changes fall in that range.
+// `unrelatedHelper`'s test must never be selected in either case.
+// ---------------------------------------------------------------------
+
+const GREET_TS: &str = "\
+export function greet(name: string): string { return `Hello, ${name}!`; }
+";
+
+const GREET_TS_BODY_EDITED: &str = "\
+export function greet(name: string): string { return `Hi, ${name}!`; }
+";
+
+const GREET_TEST_TS: &str = "\
+import { it, expect } from \"vitest\";
+import { greet } from \"./greet\";
+it(\"greets by name\", () => { expect(greet(\"Ada\")).toBe(\"Hello, Ada!\"); });
+";
+
+fn rev_parse(dir: &std::path::Path, rev: &str) -> String {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", rev])
+        .output()
+        .expect("failed to spawn git rev-parse");
+    assert!(output.status.success(), "git rev-parse {rev} failed");
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+/// Builds the three-commit `--to` fixture, returning the tempdir alongside
+/// each commit's full sha (C1, C2, C3, in that order).
+fn init_to_range_repo() -> (tempfile::TempDir, String, String, String) {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("package.json"), "{ \"name\": \"to-fixture\" }\n").unwrap();
+    // Distinct tests calling this helper (potentially concurrently, since
+    // `cargo test` runs tests in parallel by default) must not produce
+    // byte-identical commits: an otherwise-identical tree + the same-second
+    // author/committer timestamp would hash to the *same* commit sha, and
+    // since the `--to` temp worktree's path is derived solely from that sha
+    // (by design: collision-safe across runs against the same rev), two
+    // unrelated repos racing to the same sha would collide on the same
+    // filesystem path. This nonce (the tempdir's own, guaranteed-unique
+    // path) makes every call's tree distinct, hence every commit's sha
+    // distinct, regardless of timing.
+    std::fs::write(root.join(".nonce"), root.display().to_string()).unwrap();
+    std::fs::write(root.join("src/math.ts"), MATH_TS).unwrap();
+    std::fs::write(root.join("src/greet.ts"), GREET_TS).unwrap();
+    std::fs::write(root.join("src/math.test.ts"), MATH_TEST_TS).unwrap();
+    std::fs::write(root.join("src/greet.test.ts"), GREET_TEST_TS).unwrap();
+    git(root, &["init", "-b", "main"]);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-m", "C1: baseline"]);
+    let c1 = rev_parse(root, "HEAD");
+
+    std::fs::write(root.join("src/math.ts"), MATH_TS_BODY_EDITED).unwrap();
+    git(root, &["commit", "-am", "C2: edit add's body"]);
+    let c2 = rev_parse(root, "HEAD");
+
+    std::fs::write(root.join("src/greet.ts"), GREET_TS_BODY_EDITED).unwrap();
+    git(root, &["commit", "-am", "C3: edit greet's body"]);
+    let c3 = rev_parse(root, "HEAD");
+
+    (tmp, c1, c2, c3)
+}
+
+/// `--from C1 --to C2`: only `add`'s two tests are selected. `greet`'s test
+/// (unchanged in this range) and `unrelatedHelper`'s test (never changed)
+/// are both excluded.
 #[test]
-fn to_flag_is_rejected() {
-    let tmp = init_repo();
-    Command::cargo_bin("testless")
+fn to_flag_selects_only_changes_within_from_to_to_range() {
+    let (tmp, c1, c2, _c3) = init_to_range_repo();
+
+    let assert = Command::cargo_bin("testless")
         .unwrap()
-        .args(["select", "--to", "HEAD"])
+        .args(["select", "--from", &c1, "--to", &c2])
         .current_dir(tmp.path())
         .assert()
-        .code(1)
-        .stderr(predicates::str::contains("not yet supported"));
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| {
+        panic!("expected JSON stdout, got {out:?} ({e})");
+    });
+
+    assert_eq!(json["mode"], "selection");
+    let tests = json["tests"].as_array().expect("tests array");
+    let names: Vec<Vec<String>> = tests
+        .iter()
+        .map(|t| {
+            t["name"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s.as_str().unwrap().to_string())
+                .collect()
+        })
+        .collect();
+
+    assert!(
+        names.contains(&vec!["add".to_string(), "handles negatives".to_string()]),
+        "expected add/handles negatives in {names:?}"
+    );
+    assert!(
+        names.contains(&vec!["add".to_string(), "handles zero".to_string()]),
+        "expected add/handles zero in {names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|n| n.first().map(|s| s.as_str()) == Some("greets by name")),
+        "greet's test must NOT be selected for a C1..C2 range, got {names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|n| n.first().map(|s| s.as_str()) == Some("unrelatedHelper")),
+        "unrelatedHelper's test must NOT be selected, got {names:?}"
+    );
+    assert_eq!(
+        tests.len(),
+        2,
+        "expected exactly 2 selected tests, got {tests:?}"
+    );
+}
+
+/// `--from C1 --to C3`: both `add`'s and `greet`'s tests are selected
+/// (both changes fall inside the range), `unrelatedHelper`'s stays excluded.
+#[test]
+fn to_flag_selects_both_changes_across_wider_range() {
+    let (tmp, c1, _c2, c3) = init_to_range_repo();
+
+    let assert = Command::cargo_bin("testless")
+        .unwrap()
+        .args(["select", "--from", &c1, "--to", &c3])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| {
+        panic!("expected JSON stdout, got {out:?} ({e})");
+    });
+
+    assert_eq!(json["mode"], "selection");
+    let tests = json["tests"].as_array().expect("tests array");
+    let names: Vec<Vec<String>> = tests
+        .iter()
+        .map(|t| {
+            t["name"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s.as_str().unwrap().to_string())
+                .collect()
+        })
+        .collect();
+
+    assert!(
+        names.contains(&vec!["add".to_string(), "handles negatives".to_string()]),
+        "expected add/handles negatives in {names:?}"
+    );
+    assert!(
+        names.contains(&vec!["add".to_string(), "handles zero".to_string()]),
+        "expected add/handles zero in {names:?}"
+    );
+    assert!(
+        names.contains(&vec!["greets by name".to_string()]),
+        "expected greet's test in {names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|n| n.first().map(|s| s.as_str()) == Some("unrelatedHelper")),
+        "unrelatedHelper's test must NOT be selected, got {names:?}"
+    );
+    assert_eq!(
+        tests.len(),
+        3,
+        "expected exactly 3 selected tests, got {tests:?}"
+    );
+}
+
+/// The temp worktree materializing `--to` is cleaned up after the run: its
+/// directory (`$TMPDIR/testless-to-<full-sha-of-to>`) must not exist once
+/// the process has exited.
+#[test]
+fn to_flag_cleans_up_temp_worktree_after_run() {
+    let (tmp, c1, c2, _c3) = init_to_range_repo();
+    let worktree_dir = std::env::temp_dir().join(format!("testless-to-{c2}"));
+
+    Command::cargo_bin("testless")
+        .unwrap()
+        .args(["select", "--from", &c1, "--to", &c2])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+
+    assert!(
+        !worktree_dir.exists(),
+        "expected temp worktree {} to be cleaned up after the run",
+        worktree_dir.display()
+    );
+}
+
+/// A `--to` rev that doesn't resolve locally degrades to the same
+/// `run_all`/exit-2 fallback as a bad `--from` rev, rather than a hard
+/// error.
+#[test]
+fn bad_to_rev_degrades_to_run_all_exit_2() {
+    let tmp = init_repo();
+    let assert = Command::cargo_bin("testless")
+        .unwrap()
+        .args(["select", "--to", "not-a-real-rev"])
+        .current_dir(tmp.path())
+        .assert()
+        .code(2);
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+    assert_eq!(json["mode"], "run_all");
+    assert!(json["reason"].as_str().unwrap().contains("--to"));
 }
 
 /// `--format text` prints `file :: seg1 > seg2` lines on stdout and a
