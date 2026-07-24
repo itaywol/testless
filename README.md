@@ -45,6 +45,12 @@ to be read, copied, or fed to `xargs -I{} sh -c '{}'` — piping it straight to
 `sh` runs whatever the selection computed with no chance to look first, so
 treat that shortcut with the same caution as any other `| sh`.
 
+`--format args` prints nothing on stdout when testless falls back to
+run-all (exit code 2) — consumers must branch on the exit code, not on
+empty output, e.g.:
+
+    testless select --from origin/main --format args > cmds.txt || RUN_ALL=1
+
 ## How it works
 
     ┌────────────┐   ┌──────────────────────┐   ┌─────────────┐

@@ -11,6 +11,32 @@
 
 use crate::SelectedTest;
 
+/// Shell-quote an arbitrary string for safe interpolation into a command
+/// line. Test names are free-form: quotes, `$`, backticks, backslashes and
+/// apostrophes all legitimately appear in `it(...)` / `t.Run(...)` names,
+/// and a renderer that interpolates them naively produces a command line
+/// that parses wrongly (or, worse, executes something other than what it
+/// prints).
+///
+/// A token made up only of characters that are never special to a POSIX
+/// shell (`[A-Za-z0-9_./:=@^-]+`) is passed through bare, matching the
+/// unquoted output this module has always produced for ordinary
+/// identifiers and paths. Anything else — including the empty string — is
+/// wrapped in single quotes, with embedded apostrophes closed out and
+/// re-opened via the standard `'\''` trick (`'`, end quoting; `\'`, a
+/// literal apostrophe; `'`, resume quoting).
+fn sh_quote(s: &str) -> String {
+    let is_bare_safe = !s.is_empty()
+        && s.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | ':' | '=' | '@' | '^' | '-')
+        });
+    if is_bare_safe {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', r"'\''"))
+    }
+}
+
 /// Regex metacharacters that need a `\` escape inside a `go test -run`
 /// pattern segment, so a literal test name like `TestAdd$weird` doesn't
 /// get misread as an anchor.
@@ -28,24 +54,25 @@ fn escape_go_regex(segment: &str) -> String {
     escaped
 }
 
-/// `vitest run <file> -t "<name joined with ' > '>"`. `computed` widens to
-/// the whole file: a truncated (template-literal) test name can't be
-/// matched exactly, so `-t` is dropped rather than printing a pattern that
-/// would under-select.
+/// `vitest run <file> -t <shell-quoted name joined with ' > '>`. `computed`
+/// widens to the whole file: a truncated (template-literal) test name can't
+/// be matched exactly, so `-t` is dropped rather than printing a pattern
+/// that would under-select.
 fn vitest_line(t: &SelectedTest) -> String {
-    let file = t.file.display();
+    let file = sh_quote(&t.file.display().to_string());
     if t.computed {
         format!("vitest run {file}")
     } else {
         let pattern = t.name.join(" > ");
-        format!("vitest run {file} -t \"{pattern}\"")
+        format!("vitest run {file} -t {}", sh_quote(&pattern))
     }
 }
 
-/// `go test ./<dir> -run '^Root$/^sub$'`. `<dir>` is the parent directory
-/// of the `_test.go` file (Go packages are directories, not files); a
-/// synthetic `<computed>` segment (see `lang-go`'s `handle_run_call`)
-/// widens to `.*` instead of an exact anchored literal.
+/// `go test ./<dir> -run '^Root$/^sub$'` (pattern and `<dir>` both
+/// shell-quoted). `<dir>` is the parent directory of the `_test.go` file
+/// (Go packages are directories, not files); a synthetic `<computed>`
+/// segment (see `lang-go`'s `handle_run_call`) widens to `.*` instead of an
+/// exact anchored literal.
 fn gotest_line(t: &SelectedTest) -> String {
     let dir = t.file.parent().unwrap_or_else(|| std::path::Path::new(""));
     let pkg = if dir.as_os_str().is_empty() {
@@ -65,18 +92,18 @@ fn gotest_line(t: &SelectedTest) -> String {
         })
         .collect::<Vec<_>>()
         .join("/");
-    format!("go test {pkg} -run '{pattern}'")
+    format!("go test {} -run {}", sh_quote(&pkg), sh_quote(&pattern))
 }
 
-/// `cargo test '<chain joined with ::>' -- --exact`. `computed` (rare —
-/// Rust test paths are almost always static module chains) drops
+/// `cargo test <shell-quoted chain joined with ::> -- --exact`. `computed`
+/// (rare — Rust test paths are almost always static module chains) drops
 /// `--exact`, matching by substring instead of exact path.
 fn cargo_line(t: &SelectedTest) -> String {
-    let chain = t.name.join("::");
+    let chain = sh_quote(&t.name.join("::"));
     if t.computed {
-        format!("cargo test '{chain}'")
+        format!("cargo test {chain}")
     } else {
-        format!("cargo test '{chain}' -- --exact")
+        format!("cargo test {chain} -- --exact")
     }
 }
 
@@ -126,7 +153,7 @@ mod tests {
         );
         assert_eq!(
             command_lines(&[t]),
-            vec!["vitest run src/math.test.ts -t \"add > handles negatives\""]
+            vec!["vitest run src/math.test.ts -t 'add > handles negatives'"]
         );
     }
 
@@ -135,7 +162,7 @@ mod tests {
         let t = test("src/format.test.ts", &["formats"], "vitest", false);
         assert_eq!(
             command_lines(&[t]),
-            vec!["vitest run src/format.test.ts -t \"formats\""]
+            vec!["vitest run src/format.test.ts -t formats"]
         );
     }
 
@@ -193,14 +220,65 @@ mod tests {
         let t = test("src/lib.rs", &["math", "add_works"], "cargo", false);
         assert_eq!(
             command_lines(&[t]),
-            vec!["cargo test 'math::add_works' -- --exact"]
+            vec!["cargo test math::add_works -- --exact"]
         );
     }
 
     #[test]
     fn cargo_computed_drops_exact() {
         let t = test("src/lib.rs", &["math", "add_works"], "cargo", true);
-        assert_eq!(command_lines(&[t]), vec!["cargo test 'math::add_works'"]);
+        assert_eq!(command_lines(&[t]), vec!["cargo test math::add_works"]);
+    }
+
+    // Test names are free-form strings: quotes, dollar signs, backticks,
+    // backslashes and apostrophes all legitimately appear in `it(...)` /
+    // `t.Run(...)` names. `sh_quote` must render them so a shell (or the
+    // test runner's own arg parser) reconstructs the exact original bytes.
+    const WEIRD: &str = "a\"b$c`d\\e'f";
+
+    #[test]
+    fn sh_quote_passes_bare_tokens_through() {
+        assert_eq!(sh_quote("TestAdd"), "TestAdd");
+        assert_eq!(sh_quote("math::add_works"), "math::add_works");
+        assert_eq!(sh_quote("./pkg/calc"), "./pkg/calc");
+        assert_eq!(sh_quote("^TestAdd$"), "'^TestAdd$'");
+    }
+
+    #[test]
+    fn sh_quote_wraps_and_escapes_special_chars() {
+        assert_eq!(sh_quote(WEIRD), "'a\"b$c`d\\e'\\''f'");
+    }
+
+    #[test]
+    fn sh_quote_empty_string_is_wrapped() {
+        assert_eq!(sh_quote(""), "''");
+    }
+
+    #[test]
+    fn vitest_quotes_special_chars() {
+        let t = test("src/weird.test.ts", &[WEIRD], "vitest", false);
+        assert_eq!(
+            command_lines(&[t]),
+            vec!["vitest run src/weird.test.ts -t 'a\"b$c`d\\e'\\''f'"]
+        );
+    }
+
+    #[test]
+    fn gotest_quotes_special_chars() {
+        let t = test("pkg/weird_test.go", &[WEIRD], "gotest", false);
+        assert_eq!(
+            command_lines(&[t]),
+            vec!["go test ./pkg -run '^a\"b\\$c`d\\\\e'\\''f$'"]
+        );
+    }
+
+    #[test]
+    fn cargo_quotes_special_chars() {
+        let t = test("src/lib.rs", &[WEIRD], "cargo", false);
+        assert_eq!(
+            command_lines(&[t]),
+            vec!["cargo test 'a\"b$c`d\\e'\\''f' -- --exact"]
+        );
     }
 
     #[test]

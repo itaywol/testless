@@ -141,15 +141,23 @@ JSON output:
   "version": 1,
   "mode": "selection",
   "tests": [
-    { "file": "src/math.test.ts", "name": ["add", "handles negatives"], "runner": "vitest", "lang": "ts" },
-    { "file": "pkg/calc", "name": ["TestAdd", "negatives"], "runner": "gotest", "lang": "go" }
+    { "file": "src/math.test.ts", "name": ["add", "handles negatives"], "runner": "vitest", "lang": "ts", "computed": false },
+    { "file": "pkg/calc/add_test.go", "name": ["TestAdd", "negatives"], "runner": "gotest", "lang": "go", "computed": false }
   ],
-  "stats": { "total_known": 1240, "selected": 17, "widenings": 3 }
+  "stats": { "total_known": 1240, "selected": 17, "seeds": 2, "changed_files": 1 }
 }
 ```
 
+`file` is the actual test file path (for Go, the `_test.go` file itself — the
+`args` format derives the package directory from it, since `go test` targets
+packages, not files). `computed` mirrors `Def::computed_name`: true when a
+`name` segment was truncated because it couldn't be statically resolved
+(e.g. a template-literal test title), so consumers should widen their match
+rather than expect an exact `name` match. A `widenings` stat may be added
+later.
+
 `mode: "run_all"` (+ `reason`) on any internal failure. `--format args` emits
-runner-consumable invocations (`vitest run <file> -t "<pattern>"`,
+runner-consumable invocations (`vitest run <file> -t '<pattern>'`,
 `go test <pkg> -run '^TestAdd$/^negatives$'`) — formatting only, tool never runs tests.
 
 ## CLI UX

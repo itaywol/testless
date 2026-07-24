@@ -279,7 +279,7 @@ fn text_format_prints_file_and_name_lines() {
     assert!(err.contains("3"), "expected a summary footer, got {err:?}");
 }
 
-/// `--format args` prints `vitest run <file> -t "<pattern>"` lines on
+/// `--format args` prints `vitest run <file> -t '<pattern>'` lines on
 /// stdout — one per selected TS test — for the same body-edit scenario as
 /// the JSON/text tests above (Plan 4 Task 3).
 #[test]
@@ -304,13 +304,13 @@ fn args_format_prints_vitest_run_lines() {
     assert!(
         lines
             .iter()
-            .any(|l| l.contains("math.test.ts") && l.contains("-t \"add > handles negatives\"")),
+            .any(|l| l.contains("math.test.ts") && l.contains("-t 'add > handles negatives'")),
         "got stdout: {out:?}"
     );
     assert!(
         lines
             .iter()
-            .any(|l| l.contains("format.test.ts") && l.contains("-t \"formats\"")),
+            .any(|l| l.contains("format.test.ts") && l.contains("-t formats")),
         "got stdout: {out:?}"
     );
     assert_eq!(
