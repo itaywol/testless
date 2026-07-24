@@ -112,5 +112,5 @@ jobs:
           ' "$version"
 
           for pkg in testless-linux-x64 testless-linux-arm64 testless-darwin-x64 testless-darwin-arm64 testless; do
-            npm publish --access public "npm/${pkg}"
+            npm publish --access public "./npm/${pkg}"
           done
