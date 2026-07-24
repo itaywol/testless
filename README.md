@@ -34,7 +34,7 @@ widens instead of guessing, and never silently skips a test that could fail.
 | Ecosystem | Command |
 |---|---|
 | JS / TS | `npm i -D testless-cli` (bin: `testless`) |
-| Go | `curl -fsSL https://testless.itaywol.tools/install.sh \| sh` |
+| Go | `curl -fsSL https://testless.itaywol.tools/install.sh \| sh` or `brew install itaywol/testless/testless` |
 | Rust | `cargo binstall testless` or `cargo install testless` |
 
 Prebuilt binaries on [Releases](https://github.com/itaywol/testless/releases). Nix flake repo: `nix develop`.

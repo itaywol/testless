@@ -247,7 +247,7 @@ h2 {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   overflow-x: auto;
-  white-space: nowrap;
+  white-space: pre;
   font-size: 0.8rem;
   -webkit-overflow-scrolling: touch;
   mask-image: linear-gradient(to right, black calc(100% - 28px), transparent 100%);
