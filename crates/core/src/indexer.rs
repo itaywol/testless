@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
+use globset::GlobSet;
 use tree_sitter::Parser;
 
 use crate::cache::CachedExtraction;
@@ -19,9 +20,10 @@ pub struct IndexStats {
 }
 
 /// Walk `root`, parse every file `registry` matches, and build the full
-/// `Graph` from scratch (no previous run to reuse).
+/// `Graph` from scratch (no previous run to reuse, no `testless.toml`
+/// `ignore` filtering).
 pub fn index_repo(root: &Path, registry: &Registry) -> Result<Graph> {
-    let (graph, _extractions, _stats) = index_repo_incremental(root, registry, None)?;
+    let (graph, _extractions, _stats) = index_repo_incremental(root, registry, None, None)?;
     Ok(graph)
 }
 
@@ -32,12 +34,18 @@ pub fn index_repo(root: &Path, registry: &Registry) -> Result<Graph> {
 /// there's no in-place patching and no risk of dangling ids. Deleted files
 /// drop out naturally since they're no longer in the discovered set; renames
 /// are just a delete + an add.
+///
+/// `ignore` is `testless.toml`'s compiled `ignore` glob set (see
+/// `crate::config::Config::ignore_globset`), forwarded straight to
+/// `discover`; `None` skips that filtering entirely (no config, or a caller
+/// that predates the config feature).
 pub fn index_repo_incremental(
     root: &Path,
     registry: &Registry,
+    ignore: Option<&GlobSet>,
     prev: Option<(Graph, Vec<CachedExtraction>)>,
 ) -> Result<(Graph, Vec<CachedExtraction>, IndexStats)> {
-    let files = discover(root, registry);
+    let files = discover(root, registry, ignore);
 
     let mut prev_extractions: HashMap<PathBuf, ([u8; 32], Extraction)> = prev
         .map(|(_, extractions)| {

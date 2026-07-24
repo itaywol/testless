@@ -64,6 +64,15 @@ testless select --from origin/main --format args > cmds.txt || RUN_ALL=1
 
 Live recordings of these runs rotate on [the website](https://testless.itaywol.tools).
 
+## Config
+
+Optional `testless.toml` at the repo root, for the cases static inference can't cover:
+
+```toml
+always-run = ["tests/smoke/**", "**/*.e2e.test.ts"]  # always select these tests
+ignore = ["**/generated/**", "*.pb.go"]               # never index these files
+```
+
 ## Languages
 
 TypeScript / JavaScript (vitest, jest `-t` patterns) · Go (`go test -run`) · Rust (`cargo test`)

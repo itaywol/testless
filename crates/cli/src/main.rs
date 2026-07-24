@@ -8,6 +8,7 @@ mod format;
 
 use testless_core::cache::{Cache, CachedExtraction};
 use testless_core::classify::{classify, ChangeMode, SeedKind};
+use testless_core::config::{self, Config};
 use testless_core::gitio;
 use testless_core::graph::{CallTarget, DefId, DefKind, Edge, Graph};
 use testless_core::indexer::index_repo_incremental;
@@ -106,6 +107,25 @@ fn cache_for(cwd: &std::path::Path) -> Cache {
     }
 }
 
+/// Loads `{cwd}/testless.toml` (see `testless_core::config::Config`) and
+/// eagerly validates both glob lists, so a malformed config (bad TOML, or a
+/// syntactically invalid glob pattern in either `ignore` or `always-run`)
+/// fails loudly right here, in every command that reaches it, rather than
+/// only surfacing later when a glob is actually evaluated. This is a hard
+/// error (bubbles up through `main`'s `Err` branch, exit 1): a `testless.toml`
+/// the user wrote and got wrong deserves a clear failure, not a silent
+/// `run_all` degrade.
+fn load_config(cwd: &std::path::Path) -> Result<Config> {
+    let config = Config::load(cwd).context("loading testless.toml")?;
+    config
+        .ignore_globset()
+        .context("parsing testless.toml `ignore` globs")?;
+    config
+        .always_run_globset()
+        .context("parsing testless.toml `always-run` globs")?;
+    Ok(config)
+}
+
 fn count_tests(graph: &Graph) -> usize {
     graph
         .defs
@@ -147,11 +167,15 @@ fn cmd_index(full: bool) -> Result<()> {
     let cwd = std::env::current_dir().context("getting current directory")?;
     let cache = cache_for(&cwd);
     let prev = if full { None } else { cache.load() };
+    let config = load_config(&cwd)?;
+    let ignore = config
+        .ignore_globset()
+        .context("parsing testless.toml ignore globs")?;
 
     eprintln!("indexing {}...", cwd.display());
     let start = Instant::now();
     let (graph, extractions, stats) =
-        index_repo_incremental(&cwd, &registry(), prev).context("indexing repo")?;
+        index_repo_incremental(&cwd, &registry(), Some(&ignore), prev).context("indexing repo")?;
     let ms = start.elapsed().as_millis() as u64;
 
     cache.save(&graph, &extractions).context("saving cache")?;
@@ -269,16 +293,23 @@ fn seed_kind_label(kind: SeedKind) -> &'static str {
 /// still map that to a distinct exit code, not a `main`-reported `Err`.
 ///
 /// Returns the graph, its cached per-file extractions, the classification,
-/// and the count of files `changed_files` reported (0 on the degrade-to-
-/// run-all path); the last is used only for stats reporting by callers.
-fn analyze(from: &str) -> Result<(Graph, Vec<CachedExtraction>, ChangeMode, usize)> {
+/// the count of files `changed_files` reported (0 on the degrade-to-
+/// run-all path, used only for stats reporting by callers), and the loaded
+/// `testless.toml` config (empty defaults if none exists), so callers that
+/// need `always_run` (namely `select`/`why`) don't have to reload it.
+fn analyze(from: &str) -> Result<(Graph, Vec<CachedExtraction>, ChangeMode, usize, Config)> {
     let cwd = std::env::current_dir().context("getting current directory")?;
     let reg = registry();
     let cache = cache_for(&cwd);
     let prev = cache.load();
 
+    let config = load_config(&cwd)?;
+    let ignore = config
+        .ignore_globset()
+        .context("parsing testless.toml ignore globs")?;
+
     let (graph, extractions, _stats) =
-        index_repo_incremental(&cwd, &reg, prev).context("indexing repo")?;
+        index_repo_incremental(&cwd, &reg, Some(&ignore), prev).context("indexing repo")?;
 
     let (mode, changed_count) = match gitio::changed_files(&cwd, from, None) {
         Ok(changed) => {
@@ -295,7 +326,7 @@ fn analyze(from: &str) -> Result<(Graph, Vec<CachedExtraction>, ChangeMode, usiz
 
     cache.save(&graph, &extractions).context("saving cache")?;
 
-    Ok((graph, extractions, mode, changed_count))
+    Ok((graph, extractions, mode, changed_count, config))
 }
 
 /// `--from <rev>` diffed against the current worktree, classified into
@@ -309,7 +340,7 @@ fn cmd_changes(from: String, to: Option<String>) -> Result<i32> {
         anyhow::bail!("--to is not yet supported (v1 only diffs --from against the worktree)");
     }
 
-    let (graph, _extractions, mode, changed_count) = analyze(&from)?;
+    let (graph, _extractions, mode, changed_count, _config) = analyze(&from)?;
 
     let exit_code = match &mode {
         ChangeMode::Selection(_) => 0,
@@ -374,6 +405,26 @@ fn cmd_changes(from: String, to: Option<String>) -> Result<i32> {
     Ok(exit_code)
 }
 
+/// The impact walk's selected `TestCase` defs, unioned with every
+/// `TestCase` whose file matches one of `config`'s `always-run` globs (see
+/// `testless_core::config::always_run_matches`). This is the escape hatch's
+/// selection-level half: a smoke test matching an `always-run` glob is
+/// selected even when the walk itself found nothing to seed (e.g. a
+/// comment-only edit), because it's never reached via any `Seed` at all.
+/// Ascending `DefId` order, matching `impacted_tests`'s own determinism.
+fn selected_test_defs(
+    graph: &Graph,
+    seeds: &[testless_core::classify::Seed],
+    config: &Config,
+) -> Result<Vec<DefId>> {
+    let mut selected: std::collections::BTreeSet<DefId> =
+        impacted_tests(graph, seeds).into_iter().collect();
+    for (id, _glob) in config::always_run_matches(graph, config)? {
+        selected.insert(id);
+    }
+    Ok(selected.into_iter().collect())
+}
+
 /// The test-runner label for a def's file language, per the `select` wire
 /// contract: `ts` -> `vitest`, `go` -> `gotest`, `rust` -> `cargo`. Any
 /// other/future registered language degrades to `"unknown"` rather than
@@ -413,7 +464,7 @@ fn cmd_select(from: String, to: Option<String>, format: Option<Format>) -> Resul
         anyhow::bail!("--to is not yet supported (v1 only diffs --from against the worktree)");
     }
 
-    let (graph, _extractions, mode, changed_count) = analyze(&from)?;
+    let (graph, _extractions, mode, changed_count, config) = analyze(&from)?;
     // `--format` always wins; omitted, it sniffs the TTY like `changes`
     // does. `Args` is never the sniffed default; it must be requested.
     let resolved_format = format.unwrap_or_else(|| {
@@ -449,7 +500,7 @@ fn cmd_select(from: String, to: Option<String>, format: Option<Format>) -> Resul
 
     let total_known = count_tests(&graph);
     let seed_count = seeds.len();
-    let test_defs = impacted_tests(&graph, &seeds);
+    let test_defs = selected_test_defs(&graph, &seeds, &config)?;
     let tests: Vec<SelectedTest> = test_defs
         .into_iter()
         .map(|id| {
@@ -527,11 +578,18 @@ fn cmd_select(from: String, to: Option<String>, format: Option<Format>) -> Resul
 /// A selected test that matched a `why` query, along with its
 /// seed -> test hop path (from `walk::impacted_tests_with_paths`) and the
 /// `<file> :: <name chain>` string `test_id` was matched against.
+///
+/// `always_run_glob` is `Some(<glob>)` exactly when this test was selected
+/// *only* via `testless.toml`'s `always-run` list (the impact walk itself
+/// never reached it at all, not even as a bare/empty-path seed): in that
+/// case `path` is empty and the `always-run` glob is the sole explanation
+/// for the selection, rendered distinctly from an ordinary empty-path seed.
 struct WhyCandidate {
     file: std::path::PathBuf,
     name: Vec<String>,
     path: Vec<Hop>,
     match_str: String,
+    always_run_glob: Option<String>,
 }
 
 /// Human-facing verb phrase for a hop's edge kind, used as the prefix of
@@ -577,11 +635,22 @@ fn def_display(graph: &Graph, id: DefId) -> (String, std::path::PathBuf) {
 /// always renders as `  = test "<name chain>" (<file>)` regardless of its
 /// edge kind, since it's the destination, not another impacted def. A test
 /// that's itself a seed (empty path, e.g. a newly `Added` test) has no
-/// preceding `changed` line: just the bare `= test ...` line. Returns lines
-/// rather than printing directly so it's unit-testable without capturing
-/// stdout; `print_why_text` is the printing wrapper callers actually use.
+/// preceding `changed` line: just the bare `= test ...` line. A test
+/// selected only via a `testless.toml` `always-run` glob (also an empty
+/// path, but distinguished by `always_run_glob` being `Some`) instead gets a
+/// `selected by always-run glob '<glob>'` line, since "no walk path" means
+/// something different there: the walk never reached this test by any means
+/// at all. Returns lines rather than printing directly so it's unit-testable
+/// without capturing stdout; `print_why_text` is the printing wrapper
+/// callers actually use.
 fn why_text_lines(graph: &Graph, candidate: &WhyCandidate) -> Vec<String> {
     let test_name = candidate.name.join(" > ");
+    if let Some(glob) = &candidate.always_run_glob {
+        return vec![
+            format!("selected by always-run glob '{glob}'"),
+            format!("  = test \"{test_name}\" ({})", candidate.file.display()),
+        ];
+    }
     if candidate.path.is_empty() {
         return vec![format!(
             "= test \"{test_name}\" ({})",
@@ -620,7 +689,10 @@ fn print_why_text(graph: &Graph, candidate: &WhyCandidate) {
 
 /// `why`'s JSON output for an unambiguous match: `{"version":1,"test":
 /// {...},"path":[{"from":{...},"edge":...,"to":{...}}, ...]}`, each hop
-/// endpoint rendered as `{"name":..., "file":...}` via `def_display`.
+/// endpoint rendered as `{"name":..., "file":...}` via `def_display`. A test
+/// selected only via an `always-run` glob (see `WhyCandidate::always_run_glob`)
+/// carries an empty `path` plus an extra top-level `"always_run"` string
+/// field naming the matched glob, instead of the usual hop chain.
 fn why_json(graph: &Graph, candidate: &WhyCandidate) -> serde_json::Value {
     let path_json: Vec<_> = candidate
         .path
@@ -636,7 +708,7 @@ fn why_json(graph: &Graph, candidate: &WhyCandidate) -> serde_json::Value {
         })
         .collect();
 
-    serde_json::json!({
+    let mut out = serde_json::json!({
         "version": 1,
         "mode": "explained",
         "test": {
@@ -644,7 +716,11 @@ fn why_json(graph: &Graph, candidate: &WhyCandidate) -> serde_json::Value {
             "name": candidate.name,
         },
         "path": path_json,
-    })
+    });
+    if let Some(glob) = &candidate.always_run_glob {
+        out["always_run"] = serde_json::json!(glob);
+    }
+    out
 }
 
 /// `testless why <test-id>`: explain why a test was (or wasn't) selected,
@@ -660,7 +736,7 @@ fn why_json(graph: &Graph, candidate: &WhyCandidate) -> serde_json::Value {
 /// the same reason/exit-code (2) contract as `select`/`changes`: there's no
 /// specific walk to explain when everything runs.
 fn cmd_why(test_id: String, from: String) -> Result<i32> {
-    let (graph, _extractions, mode, _changed_count) = analyze(&from)?;
+    let (graph, _extractions, mode, _changed_count, config) = analyze(&from)?;
     let is_tty = std::io::stdout().is_terminal();
 
     let seeds = match mode {
@@ -680,10 +756,25 @@ fn cmd_why(test_id: String, from: String) -> Result<i32> {
         }
     };
 
-    let with_paths = impacted_tests_with_paths(&graph, &seeds);
-    let candidates: Vec<WhyCandidate> = with_paths
+    // The walk's own selection (possibly with an empty path, for a def
+    // that's itself a seed) takes precedence over `always-run`: a test is
+    // only explained via its `always-run` glob when the walk didn't reach
+    // it by any means at all.
+    let with_paths: std::collections::HashMap<DefId, Vec<Hop>> =
+        impacted_tests_with_paths(&graph, &seeds)
+            .into_iter()
+            .collect();
+    let always_run: std::collections::HashMap<DefId, String> =
+        config::always_run_matches(&graph, &config)?
+            .into_iter()
+            .collect();
+
+    let mut all_ids: std::collections::BTreeSet<DefId> = with_paths.keys().copied().collect();
+    all_ids.extend(always_run.keys().copied());
+
+    let candidates: Vec<WhyCandidate> = all_ids
         .into_iter()
-        .map(|(id, path)| {
+        .map(|id| {
             let def = graph.def(id);
             let file = graph.files[def.file.0 as usize].path.clone();
             let name = def
@@ -691,11 +782,16 @@ fn cmd_why(test_id: String, from: String) -> Result<i32> {
                 .clone()
                 .unwrap_or_else(|| vec![def.name.clone()]);
             let match_str = format!("{} :: {}", file.display(), name.join(" > "));
+            let (path, always_run_glob) = match with_paths.get(&id) {
+                Some(path) => (path.clone(), None),
+                None => (Vec::new(), always_run.get(&id).cloned()),
+            };
             WhyCandidate {
                 file,
                 name,
                 path,
                 match_str,
+                always_run_glob,
             }
         })
         .collect();
@@ -842,6 +938,7 @@ mod why_tests {
                 },
             ],
             match_str: "src/format.test.ts :: formats a sum".to_string(),
+            always_run_glob: None,
         };
 
         let lines = why_text_lines(&g, &candidate);
@@ -866,10 +963,35 @@ mod why_tests {
             name: vec!["t".to_string()],
             path: vec![],
             match_str: "src/a.test.ts :: t".to_string(),
+            always_run_glob: None,
         };
 
         let lines = why_text_lines(&g, &candidate);
         assert_eq!(lines, vec!["= test \"t\" (src/a.test.ts)".to_string()]);
+    }
+
+    #[test]
+    fn why_text_lines_always_run_glob_overrides_empty_path() {
+        let mut g = Graph::default();
+        let test_file = file(&mut g, "tests/smoke/login.test.ts");
+        def(&mut g, "logs in", DefKind::TestCase, test_file);
+
+        let candidate = WhyCandidate {
+            file: PathBuf::from("tests/smoke/login.test.ts"),
+            name: vec!["logs in".to_string()],
+            path: vec![],
+            match_str: "tests/smoke/login.test.ts :: logs in".to_string(),
+            always_run_glob: Some("tests/smoke/**".to_string()),
+        };
+
+        let lines = why_text_lines(&g, &candidate);
+        assert_eq!(
+            lines,
+            vec![
+                "selected by always-run glob 'tests/smoke/**'".to_string(),
+                "  = test \"logs in\" (tests/smoke/login.test.ts)".to_string(),
+            ]
+        );
     }
 
     #[test]

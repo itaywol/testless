@@ -117,7 +117,7 @@ fn body_edit_seeds_exactly_that_defs_body() {
     );
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
     let add = find_def(&graph, "add");
 
     let changed = vec![ChangedFile {
@@ -160,7 +160,7 @@ fn exported_arrow_const_body_edit_does_not_seed_module_init() {
     );
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
     let mul = find_def(&graph, "mul");
 
     let changed = vec![ChangedFile {
@@ -209,7 +209,7 @@ fn export_const_value_edit_seeds_module_init() {
     );
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
 
     let changed = vec![ChangedFile {
         path: PathBuf::from("src/config.ts"),
@@ -253,7 +253,7 @@ fn comment_only_edit_yields_empty_selection() {
     );
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
 
     let changed = vec![ChangedFile {
         path: PathBuf::from("src/math.ts"),
@@ -280,7 +280,7 @@ fn config_file_change_forces_run_all() {
     write(root, "src/math.ts", MATH_ADD_ORIGINAL);
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
 
     let changed = vec![ChangedFile {
         path: PathBuf::from("package.json"),
@@ -314,7 +314,7 @@ fn added_test_file_seeds_test_cases_and_module_init_as_added() {
     );
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
     let file_id = testless_core::FileId(
         graph
             .files
@@ -382,7 +382,7 @@ fn deleted_source_file_with_importer_seeds_importer_module_init() {
     );
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
     let consumer_id = testless_core::FileId(
         graph
             .files
@@ -424,7 +424,7 @@ fn deleted_source_file_with_no_importers_yields_empty_selection() {
     write(root, "src/math.ts", MATH_ADD_ORIGINAL);
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
 
     let changed = vec![ChangedFile {
         path: PathBuf::from("src/removed.ts"),
@@ -452,7 +452,7 @@ fn unindexed_file_with_no_importers_yields_empty_selection() {
     write(root, "README.md", "# hello\n");
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
 
     let changed = vec![ChangedFile {
         path: PathBuf::from("README.md"),
@@ -486,7 +486,7 @@ fn unresolved_json_import_seeds_importers_module_init() {
     );
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
     let consumer_id = testless_core::FileId(
         graph
             .files
@@ -534,7 +534,7 @@ fn extensionless_import_matches_changed_file_by_stem() {
     );
 
     let registry = registry();
-    let (graph, extractions, _) = index_repo_incremental(root, &registry, None).unwrap();
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
     let consumer_id = testless_core::FileId(
         graph
             .files

@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod classify;
+pub mod config;
 pub mod diffdef;
 pub mod discover;
 pub mod fingerprint;

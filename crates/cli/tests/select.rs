@@ -219,6 +219,148 @@ fn comment_only_edit_yields_empty_tests() {
     assert_eq!(json["stats"]["total_known"], 5);
 }
 
+// ---------------------------------------------------------------------
+// `testless.toml` escape hatch (issue #15): `always-run` (selection-level)
+// and `ignore` (discovery-level) globs.
+// ---------------------------------------------------------------------
+
+const SMOKE_TEST_TS: &str = "\
+import { it, expect } from \"vitest\";
+it(\"smoke check\", () => { expect(true).toBe(true); });
+";
+
+const ALWAYS_RUN_TESTLESS_TOML: &str = "always-run = [\"src/smoke.test.ts\"]\n";
+
+/// Same base fixture as `init_repo`, plus an unrelated `src/smoke.test.ts`
+/// and a `testless.toml` marking it `always-run`, all committed together
+/// (so the config file itself is never part of a later diff).
+fn init_repo_with_always_run() -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("package.json"),
+        "{ \"name\": \"select-fixture\" }\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("src/math.ts"), MATH_TS).unwrap();
+    std::fs::write(root.join("src/format.ts"), FORMAT_TS).unwrap();
+    std::fs::write(root.join("src/math.test.ts"), MATH_TEST_TS).unwrap();
+    std::fs::write(root.join("src/format.test.ts"), FORMAT_TEST_TS).unwrap();
+    std::fs::write(root.join("src/unrelated.test.ts"), UNRELATED_TEST_TS).unwrap();
+    std::fs::write(root.join("src/smoke.test.ts"), SMOKE_TEST_TS).unwrap();
+    std::fs::write(root.join("testless.toml"), ALWAYS_RUN_TESTLESS_TOML).unwrap();
+    git(root, &["init", "-b", "main"]);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-m", "initial"]);
+    tmp
+}
+
+/// `always-run` in `testless.toml` selects a matching test even when the
+/// walk itself found nothing to seed: a comment-only edit of `add` (zero
+/// seeds, see `comment_only_edit_yields_empty_tests`) still selects exactly
+/// `src/smoke.test.ts`'s test, because that file's path matches the
+/// `always-run` glob regardless of the walk's own result.
+#[test]
+fn always_run_glob_selects_smoke_test_even_with_zero_seeds() {
+    let tmp = init_repo_with_always_run();
+    let root = tmp.path();
+    std::fs::write(root.join("src/math.ts"), MATH_TS_COMMENT_EDITED).unwrap();
+
+    let assert = Command::cargo_bin("testless")
+        .unwrap()
+        .arg("select")
+        .current_dir(root)
+        .assert()
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| {
+        panic!("expected JSON stdout, got {out:?} ({e})");
+    });
+
+    assert_eq!(json["mode"], "selection");
+    assert_eq!(json["stats"]["seeds"], 0, "comment-only edit seeds nothing");
+    // 5 fixture tests (as in comment_only_edit_yields_empty_tests) plus the
+    // smoke test itself.
+    assert_eq!(json["stats"]["total_known"], 6);
+    assert_eq!(json["stats"]["selected"], 1);
+
+    let tests = json["tests"].as_array().expect("tests array");
+    assert_eq!(
+        tests.len(),
+        1,
+        "expected exactly the smoke test, got {tests:?}"
+    );
+    assert_eq!(tests[0]["file"], "src/smoke.test.ts");
+    assert_eq!(tests[0]["name"].as_array().unwrap()[0], "smoke check");
+}
+
+const GENERATED_TEST_TS: &str = "\
+import { it, expect } from \"vitest\";
+it(\"generated check\", () => { expect(1).toBe(1); });
+";
+
+const IGNORE_TESTLESS_TOML: &str = "ignore = [\"src/generated/**\"]\n";
+
+/// Same base fixture as `init_repo`, plus a `src/generated/models.test.ts`
+/// (a file that, absent any config, would be indexed and add one more
+/// known test) and a `testless.toml` marking `src/generated/**` `ignore`d.
+fn init_repo_with_ignore() -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src/generated")).unwrap();
+    std::fs::write(
+        root.join("package.json"),
+        "{ \"name\": \"select-fixture\" }\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("src/math.ts"), MATH_TS).unwrap();
+    std::fs::write(root.join("src/format.ts"), FORMAT_TS).unwrap();
+    std::fs::write(root.join("src/math.test.ts"), MATH_TEST_TS).unwrap();
+    std::fs::write(root.join("src/format.test.ts"), FORMAT_TEST_TS).unwrap();
+    std::fs::write(root.join("src/unrelated.test.ts"), UNRELATED_TEST_TS).unwrap();
+    std::fs::write(root.join("src/generated/models.test.ts"), GENERATED_TEST_TS).unwrap();
+    std::fs::write(root.join("testless.toml"), IGNORE_TESTLESS_TOML).unwrap();
+    git(root, &["init", "-b", "main"]);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-m", "initial"]);
+    tmp
+}
+
+/// `ignore` in `testless.toml` drops a matching file at discovery time: its
+/// test never becomes part of `total_known`, and it's never selectable,
+/// even though it's present on disk and would otherwise be indexed.
+#[test]
+fn ignore_glob_excludes_generated_file_from_total_known() {
+    let tmp = init_repo_with_ignore();
+    let root = tmp.path();
+    std::fs::write(root.join("src/math.ts"), MATH_TS_BODY_EDITED).unwrap();
+
+    let assert = Command::cargo_bin("testless")
+        .unwrap()
+        .arg("select")
+        .current_dir(root)
+        .assert()
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| {
+        panic!("expected JSON stdout, got {out:?} ({e})");
+    });
+
+    // Same total as add_body_edit_selects_add_and_formats_tests_excludes_unrelated's
+    // fixture (5 tests): the generated file's test is excluded entirely, not
+    // just unselected.
+    assert_eq!(json["stats"]["total_known"], 5);
+
+    let tests = json["tests"].as_array().expect("tests array");
+    assert!(
+        tests
+            .iter()
+            .all(|t| t["file"] != "src/generated/models.test.ts"),
+        "generated file's test must never be selectable, got {tests:?}"
+    );
+}
+
 /// (c) A `package.json` edit forces `run_all`, exit 2.
 #[test]
 fn config_file_edit_forces_run_all_exit_2() {

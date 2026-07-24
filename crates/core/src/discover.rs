@@ -1,12 +1,24 @@
 use std::path::{Path, PathBuf};
 
+use globset::GlobSet;
 use ignore::WalkBuilder;
 
 use crate::language::{Language, Registry};
 
 /// Walk `root`, respecting `.gitignore` and hard-skipping known noise
 /// directories, returning repo-relative sorted paths matched by `registry`.
-pub fn discover<'r>(root: &Path, registry: &'r Registry) -> Vec<(PathBuf, &'r dyn Language)> {
+///
+/// `ignore`, when given, is `testless.toml`'s `ignore` glob list (see
+/// `crate::config`): any repo-relative path it matches is dropped here, at
+/// discovery time, so an ignored file never becomes a `FileNode`/`Def`
+/// candidate at all (not indexed, not selectable, not counted in
+/// `total_known`). `None` means no `testless.toml`-level filtering (every
+/// existing caller that predates the config feature).
+pub fn discover<'r>(
+    root: &Path,
+    registry: &'r Registry,
+    ignore: Option<&GlobSet>,
+) -> Vec<(PathBuf, &'r dyn Language)> {
     const SKIP_DIRS: &[&str] = &["node_modules", "vendor", "target", ".testless"];
 
     let mut out = Vec::new();
@@ -37,6 +49,9 @@ pub fn discover<'r>(root: &Path, registry: &'r Registry) -> Vec<(PathBuf, &'r dy
                 .strip_prefix(root)
                 .expect("entry under root")
                 .to_path_buf();
+            if ignore.is_some_and(|set| set.is_match(&rel)) {
+                continue;
+            }
             out.push((rel, lang));
         }
     }
@@ -66,7 +81,10 @@ mod tests {
         std::fs::write(root.join(".gitignore"), "ignored.fk\n").unwrap();
 
         let r = Registry::new(vec![Box::new(Fake)]);
-        let found: Vec<_> = discover(root, &r).into_iter().map(|(p, _)| p).collect();
+        let found: Vec<_> = discover(root, &r, None)
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
         assert_eq!(
             found,
             vec![
@@ -75,5 +93,30 @@ mod tests {
                 std::path::PathBuf::from("src/z.fk"),
             ]
         );
+    }
+
+    /// A `testless.toml`-style `ignore` glob (`**/generated/**`) excludes a
+    /// matching file at discovery time: it never becomes a candidate, so it
+    /// doesn't show up in `discover`'s output at all, unlike a
+    /// `.gitignore`d file (already covered above) which is excluded for a
+    /// different reason but the same observable effect.
+    #[test]
+    fn ignore_globset_excludes_matching_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src/generated")).unwrap();
+        std::fs::write(root.join("src/a.fk"), "").unwrap();
+        std::fs::write(root.join("src/generated/models.fk"), "").unwrap();
+
+        let r = Registry::new(vec![Box::new(Fake)]);
+        let mut builder = globset::GlobSetBuilder::new();
+        builder.add(globset::Glob::new("**/generated/**").unwrap());
+        let ignore = builder.build().unwrap();
+
+        let found: Vec<_> = discover(root, &r, Some(&ignore))
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
+        assert_eq!(found, vec![std::path::PathBuf::from("src/a.fk")]);
     }
 }
