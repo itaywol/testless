@@ -1,5 +1,5 @@
 {
-  "name": "testless",
+  "name": "testless-cli",
   "version": "0.0.0-managed",
   "description": "Run 5 tests instead of 500: test impact analysis for TypeScript, Go, and Rust",
   "keywords": [
@@ -38,9 +38,9 @@
     "node": ">=14"
   },
   "optionalDependencies": {
-    "testless-linux-x64": "0.0.0-managed",
-    "testless-linux-arm64": "0.0.0-managed",
+    "testless-darwin-arm64": "0.0.0-managed",
     "testless-darwin-x64": "0.0.0-managed",
-    "testless-darwin-arm64": "0.0.0-managed"
+    "testless-linux-arm64": "0.0.0-managed",
+    "testless-linux-x64": "0.0.0-managed"
   }
 }

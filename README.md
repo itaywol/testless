@@ -12,7 +12,7 @@
 
 [![CI](https://github.com/itaywol/testless/actions/workflows/ci.yml/badge.svg)](https://github.com/itaywol/testless/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/testless.svg)](https://crates.io/crates/testless)
-[![npm](https://img.shields.io/npm/v/testless)](https://www.npmjs.com/package/testless)
+[![npm](https://img.shields.io/npm/v/testless-cli)](https://www.npmjs.com/package/testless-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 </div>
@@ -33,7 +33,7 @@ widens instead of guessing, and never silently skips a test that could fail.
 
 | Ecosystem | Command |
 |---|---|
-| JS / TS | `npm i -D testless` |
+| JS / TS | `npm i -D testless-cli` (bin: `testless`) |
 | Go | `curl -fsSL https://testless.itaywol.tools/install.sh \| sh` |
 | Rust | `cargo binstall testless` or `cargo install testless` |
 

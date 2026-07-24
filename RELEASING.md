@@ -22,7 +22,7 @@ npm requires a package to exist before a trusted publisher can be configured
 2. Run `scripts/npm-first-publish.sh <version>` (uses `NPM_TOKEN` env var if
    set, otherwise your local npm auth). It downloads the release binaries for
    that version, stamps package versions, and publishes all five packages.
-3. On npmjs.com, for each package (`testless`, `testless-linux-x64`,
+3. On npmjs.com, for each package (`testless-cli`, `testless-linux-x64`,
    `testless-linux-arm64`, `testless-darwin-x64`, `testless-darwin-arm64`):
    Settings, Trusted Publisher, GitHub Actions, organization `itaywol`,
    repository `testless`, workflow filename `release.yml`.
