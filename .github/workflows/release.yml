@@ -61,22 +61,26 @@ jobs:
   npm-publish:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: "20", registry-url: "https://registry.npmjs.org" }
+        with: { node-version: "24", registry-url: "https://registry.npmjs.org" }
       - name: Publish npm packages
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           GH_TOKEN: ${{ github.token }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "::notice::no NPM_TOKEN set; skipping npm publish"
-            exit 0
+          if [[ "${GITHUB_REF_NAME}" == testless-v* ]]; then
+            version="${GITHUB_REF_NAME#testless-v}"
+          else
+            # workflow_dispatch from a branch: publish the version already
+            # released on crates.io, using that release's binary assets
+            version=$(grep -m1 '^version = ' crates/cli/Cargo.toml | cut -d'"' -f2)
           fi
-
-          tag="${GITHUB_REF_NAME}"
-          version="${tag#testless-v}"
+          tag="testless-v${version}"
 
           workdir=$(mktemp -d)
           gh release download "$tag" --dir "$workdir" --pattern 'testless-*.tar.gz'

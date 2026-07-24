@@ -1,0 +1,135 @@
+---
+import "../styles/global.css";
+
+const repo = "https://github.com/itaywol/testless";
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>testless: run 5 tests instead of 500</title>
+    <meta
+      name="description"
+      content="testless is function-level test impact analysis via static AST. Rust core, TypeScript/JavaScript, Go, and Rust support. Run only the tests your change could break."
+    />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <img class="logo" src="/logo-dark.svg" alt="testless" width="360" height="90" />
+          <h1 class="tagline">Run 5 tests instead of 500.</h1>
+          <p class="subline">
+            testless statically analyzes your code down to the function
+            level, so it picks exactly the tests a change could break instead
+            of running the whole suite.
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="#install">Get started</a>
+            <a class="btn btn-secondary" href={repo}>GitHub</a>
+          </div>
+        </div>
+      </section>
+
+      <section id="install">
+        <div class="wrap">
+          <p class="eyebrow">Install</p>
+          <h2>Pick your ecosystem</h2>
+          <p class="section-lede">
+            testless ships a single Rust binary with native entry points for
+            every ecosystem it supports. All three are equal citizens.
+          </p>
+          <div class="card-grid">
+            <div class="card install-card">
+              <h3>JS / TS</h3>
+              <pre class="mono"><code>npm i -D testless</code></pre>
+            </div>
+            <div class="card install-card">
+              <h3>Go</h3>
+              <pre class="mono"><code>curl -fsSL https://testless.itaywol.tools/install.sh | sh</code></pre>
+            </div>
+            <div class="card install-card">
+              <h3>Rust</h3>
+              <pre class="mono"><code>cargo binstall testless</code></pre>
+            </div>
+          </div>
+          <p class="binaries-note">
+            Prefer a prebuilt binary? Grab one from
+            <a href={`${repo}/releases`}>the releases page</a>.
+          </p>
+        </div>
+      </section>
+
+      <section id="demo">
+        <div class="wrap">
+          <p class="eyebrow">Demo</p>
+          <h2>See it pick the tests</h2>
+          <div class="demo-frame">
+            <img
+              src="/demo.gif"
+              alt="Terminal recording of testless indexing a repository, then selecting the small set of tests impacted by a code change"
+              width="1400"
+              height="800"
+            />
+          </div>
+          <div class="demo-caption">
+            <p>testless indexes the repo into a graph of defs, tests, and imports.</p>
+            <p>A changed function is diffed structurally, comments and formatting are free.</p>
+            <p>The reverse impact walk prints only the tests that could break, ready to run.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="how-it-works">
+        <div class="wrap">
+          <p class="eyebrow">How it works</p>
+          <h2>Three steps, one guarantee</h2>
+          <div class="card-grid">
+            <div class="card">
+              <span class="card-step">01</span>
+              <h3>Parse</h3>
+              <p>
+                tree-sitter builds a graph of every function, test, and
+                import across your codebase.
+              </p>
+            </div>
+            <div class="card">
+              <span class="card-step">02</span>
+              <h3>Diff</h3>
+              <p>
+                A structural AST diff finds what actually changed.
+                Comments and formatting are free.
+              </p>
+            </div>
+            <div class="card">
+              <span class="card-step">03</span>
+              <h3>Walk</h3>
+              <p>
+                A reverse impact walk finds every test that can reach the
+                change and prints your runner's own CLI invocation.
+              </p>
+            </div>
+          </div>
+          <p class="guarantee">
+            The selected set is always a superset of the truly impacted
+            tests. testless never silently skips a test that could fail.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap footer-inner">
+        <span class="mono">MIT licensed</span>
+        <nav class="footer-links">
+          <a href={repo}>GitHub</a>
+          <a href="https://crates.io/crates/testless">crates.io</a>
+          <a href="https://www.npmjs.com/package/testless">npm</a>
+        </nav>
+      </div>
+    </footer>
+  </body>
+</html>

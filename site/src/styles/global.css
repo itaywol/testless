@@ -1,0 +1,342 @@
+:root {
+  --bg: #0a0a0c;
+  --bg-elevated: #111113;
+  --bg-card: #131316;
+  --fg: #f5f5f7;
+  --fg-muted: #a1a1aa;
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --accent-1: #2dd4bf;
+  --accent-2: #a855f7;
+  --gradient: linear-gradient(135deg, var(--accent-1) 0%, var(--accent-2) 100%);
+  --focus-ring: #5eead4;
+  --radius-lg: 16px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  --max-width: 1080px;
+}
+
+/* Dark-first, dark-only: rolldown-style commits to one mode instead of
+   flipping the palette per OS preference. Simpler and stronger. */
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+code,
+pre,
+.mono {
+  font-family: var(--font-mono);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.wrap {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+section {
+  padding: 96px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+section:last-of-type {
+  border-bottom: none;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  margin: 0 0 12px;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+h2 {
+  font-size: clamp(1.6rem, 3vw, 2.2rem);
+  margin-bottom: 12px;
+}
+
+.section-lede {
+  color: var(--fg-muted);
+  max-width: 60ch;
+  margin: 0 0 48px;
+  font-size: 1.05rem;
+}
+
+/* ---------- Hero ---------- */
+
+.hero {
+  position: relative;
+  padding: 120px 0 96px;
+  text-align: center;
+  overflow: hidden;
+}
+
+.hero::before {
+  content: "";
+  position: absolute;
+  top: -180px;
+  left: 50%;
+  translate: -50% 0;
+  width: 900px;
+  height: 480px;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--accent-1) 22%, transparent),
+    transparent 70%
+  );
+  filter: blur(10px);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.hero .wrap {
+  position: relative;
+  z-index: 1;
+}
+
+.logo {
+  width: min(320px, 70vw);
+  height: auto;
+  margin: 0 auto 40px;
+}
+
+.tagline {
+  font-size: clamp(2rem, 5vw, 3.25rem);
+  margin: 0 auto 20px;
+  max-width: 20ch;
+}
+
+.subline {
+  color: var(--fg-muted);
+  font-size: 1.15rem;
+  max-width: 56ch;
+  margin: 0 auto 40px;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  text-decoration: none;
+  font-size: 0.95rem;
+  border: 1px solid transparent;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.btn-primary {
+  background: var(--gradient);
+  color: #06060a;
+  box-shadow: 0 8px 24px -8px color-mix(in srgb, var(--accent-2) 55%, transparent);
+}
+
+.btn-secondary {
+  border-color: var(--border-strong);
+  color: var(--fg);
+  background: var(--bg-card);
+}
+
+/* ---------- Cards grid ---------- */
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+}
+
+.card {
+  min-width: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+}
+
+.card h3 {
+  font-size: 1.1rem;
+  margin-bottom: 10px;
+}
+
+.card p {
+  color: var(--fg-muted);
+  margin: 0 0 16px;
+  font-size: 0.95rem;
+}
+
+.card-step {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--accent-1);
+  margin-bottom: 8px;
+  display: block;
+}
+
+/* ---------- Install ---------- */
+
+.install-card pre {
+  margin: 0;
+  padding: 14px 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  -webkit-overflow-scrolling: touch;
+}
+
+.binaries-note {
+  margin-top: 28px;
+  color: var(--fg-muted);
+  font-size: 0.95rem;
+}
+
+.binaries-note a {
+  color: var(--accent-1);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ---------- Demo ---------- */
+
+.demo-frame {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 12px;
+  max-width: 900px;
+  margin: 0 auto 28px;
+}
+
+.demo-frame img {
+  border-radius: var(--radius-md);
+  width: 100%;
+  height: auto;
+}
+
+.demo-caption {
+  max-width: 60ch;
+  margin: 0 auto;
+  text-align: center;
+  color: var(--fg-muted);
+}
+
+.demo-caption p {
+  margin: 0 0 6px;
+}
+
+/* ---------- Guarantee ---------- */
+
+.guarantee {
+  margin-top: 32px;
+  padding: 24px 28px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-strong);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent-1) 10%, transparent),
+    color-mix(in srgb, var(--accent-2) 10%, transparent)
+  );
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+/* ---------- Footer ---------- */
+
+footer {
+  padding: 48px 0;
+}
+
+.footer-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  color: var(--fg-muted);
+  font-size: 0.9rem;
+}
+
+.footer-links {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.footer-links a {
+  text-decoration: none;
+  color: var(--fg-muted);
+}
+
+.footer-links a:hover {
+  color: var(--fg);
+}
+
+@media (max-width: 600px) {
+  section {
+    padding: 64px 0;
+  }
+  .hero {
+    padding: 80px 0 64px;
+  }
+  .footer-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
