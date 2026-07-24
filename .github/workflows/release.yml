@@ -81,6 +81,7 @@ jobs:
       - name: Publish npm packages
         env:
           GH_TOKEN: ${{ github.token }}
+          NPM_CONFIG_LOGLEVEL: http
         run: |
           if [[ "${GITHUB_REF_NAME}" == testless-v* ]]; then
             version="${GITHUB_REF_NAME#testless-v}"
