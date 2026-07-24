@@ -328,16 +328,36 @@ footer {
 
 .footer-links {
   display: flex;
-  gap: 20px;
+  align-items: center;
+  gap: 16px;
   flex-wrap: wrap;
 }
 
 .footer-links a {
-  text-decoration: none;
-  color: var(--fg-muted);
+  display: inline-flex;
+  color: #8a8a9b;
+  transition: color 0.15s ease;
 }
 
-.footer-links a:hover {
+.footer-links a:hover,
+.footer-links a:focus-visible {
+  color: var(--fg);
+}
+
+.footer-attribution {
+  padding-top: 20px;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.footer-attribution .mono a {
+  color: #8a8a9b;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  transition: color 0.15s ease;
+}
+
+.footer-attribution .mono a:hover {
   color: var(--fg);
 }
 

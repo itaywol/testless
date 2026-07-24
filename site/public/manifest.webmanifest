@@ -1,0 +1,21 @@
+{
+  "name": "testless",
+  "short_name": "testless",
+  "description": "testless cuts your test time to the minimum: function-level test impact analysis via static AST picks exactly the tests your change could break.",
+  "start_url": "/",
+  "display": "browser",
+  "background_color": "#0b0b10",
+  "theme_color": "#0b0b10",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
