@@ -67,9 +67,10 @@ const repo = "https://github.com/itaywol/testless";
       <section id="demo">
         <div class="wrap">
           <p class="eyebrow">Demo</p>
-          <h2>See it pick the tests</h2>
+          <h2 id="demo-title">See it pick the tests</h2>
           <div class="demo-frame">
             <img
+              id="demo-gif"
               src="/demo.gif"
               alt="Terminal recording of testless indexing a repository, then selecting the small set of tests impacted by a code change"
               width="1400"
@@ -77,10 +78,38 @@ const repo = "https://github.com/itaywol/testless";
             />
           </div>
           <div class="demo-caption">
-            <p>testless indexes the repo into a graph of functions, tests, and imports.</p>
+            <p id="demo-context">testless indexes the repo into a graph of functions, tests, and imports.</p>
             <p>A changed function is diffed structurally, comments and formatting are free.</p>
             <p>The reverse impact walk prints only the tests that could break, ready to run.</p>
           </div>
+          <script is:inline>
+            (function () {
+              var demos = [
+                {
+                  src: "/demo.gif",
+                  title: "See it pick the tests",
+                  context:
+                    "testless indexes the repo into a graph of functions, tests, and imports.",
+                },
+                {
+                  src: "/demo-astro.gif",
+                  title: "Live on withastro/astro: 6 of 6,121 tests",
+                  context:
+                    "A real astro commit (a Markdoc transform fix). testless selects 6 impacted tests out of 6,121.",
+                },
+                {
+                  src: "/demo-gin.gif",
+                  title: "Live on gin-gonic/gin: 18 of 674 tests",
+                  context:
+                    "A real gin commit (a panic-recovery fix). testless selects 18 impacted tests out of 674.",
+                },
+              ];
+              var pick = demos[Math.floor(Math.random() * demos.length)];
+              document.getElementById("demo-gif").src = pick.src;
+              document.getElementById("demo-title").textContent = pick.title;
+              document.getElementById("demo-context").textContent = pick.context;
+            })();
+          </script>
         </div>
       </section>
 
