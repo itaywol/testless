@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-20 -14 220 226" role="img" aria-labelledby="tl-mark-title">
+  <title id="tl-mark-title">testless flask mark</title>
+  <defs>
+    <linearGradient id="tl-mark-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2dd4bf" />
+      <stop offset="100%" stop-color="#a855f7" />
+    </linearGradient>
+    <linearGradient id="tl-mark-grad-v" x1="0%" y1="0%" x2="30%" y2="100%">
+      <stop offset="0%" stop-color="#5eead4" />
+      <stop offset="55%" stop-color="#2dd4bf" />
+      <stop offset="100%" stop-color="#a855f7" />
+    </linearGradient>
+    <filter id="tl-glow-soft" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="9" result="b" />
+      <feColorMatrix in="b" type="matrix"
+        values="0 0 0 0 0.36
+                0 0 0 0 0.66
+                0 0 0 0 0.75
+                0 0 0 0.9 0" />
+    </filter>
+    <filter id="tl-glow-tight" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="3.2" />
+    </filter>
+  </defs>
+
+  <!-- ambient glow blob behind the flask -->
+  <path
+    d="M80,20 L120,20 L120,28 C120,30 119,31 117,32 L117,90 L170,172 C176,182 178,188 178,192 C178,196 174,198 168,198 L32,198 C26,198 22,196 22,192 C22,188 24,182 30,172 L83,90 L83,32 C81,31 80,30 80,28 Z"
+    fill="url(#tl-mark-grad)"
+    opacity="0.55"
+    filter="url(#tl-glow-soft)"
+  />
+
+  <!-- speed lines trailing left -->
+  <g stroke-linecap="round" filter="url(#tl-glow-tight)">
+    <line x1="12" y1="96" x2="-13" y2="91" stroke="url(#tl-mark-grad)" stroke-width="7" opacity="0.55" />
+    <line x1="9" y1="118" x2="-7" y2="115" stroke="url(#tl-mark-grad)" stroke-width="7" opacity="0.4" />
+    <line x1="7" y1="140" x2="-2" y2="138" stroke="url(#tl-mark-grad)" stroke-width="7" opacity="0.25" />
+  </g>
+
+  <!-- liquid fill, inset from glass walls, wavy surface -->
+  <path
+    d="M71,116 C82,108 92,122 100,115 C108,108 118,122 129,115
+       L129,171 C129,171 176,182 168,198 L32,198 C24,182 71,171 71,171 Z"
+    fill="url(#tl-mark-grad-v)"
+  />
+  <path
+    d="M129,115 C129,115 129,115 129,115 C132,150 172,180 168,198 L140,198 C140,198 129,150 129,115 Z"
+    fill="#000000"
+    opacity="0.12"
+  />
+
+  <!-- liquid surface highlight -->
+  <path
+    d="M71,116 C82,108 92,122 100,115 C108,108 118,122 129,115"
+    fill="none"
+    stroke="#e8fffb"
+    stroke-width="3"
+    stroke-linecap="round"
+    opacity="0.8"
+  />
+
+  <!-- flask glass outline -->
+  <path
+    d="M80,20 L120,20 L120,28 C120,30 119,31 117,32 L117,90 L170,172 C176,182 178,188 178,192 C178,196 174,198 168,198 L32,198 C26,198 22,196 22,192 C22,188 24,182 30,172 L83,90 L83,32 C81,31 80,30 80,28 Z"
+    fill="none"
+    stroke="#f5f5f7"
+    stroke-width="7"
+    stroke-linejoin="round"
+    stroke-linecap="round"
+  />
+</svg>

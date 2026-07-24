@@ -1,18 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="testless">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="1 8 198 198" role="img" aria-label="testless">
   <defs>
-    <linearGradient id="tl-grad-favicon" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#2dd4bf" />
+    <linearGradient id="tl-fav-grad" x1="0%" y1="0%" x2="30%" y2="100%">
+      <stop offset="0%" stop-color="#5eead4" />
+      <stop offset="55%" stop-color="#2dd4bf" />
       <stop offset="100%" stop-color="#a855f7" />
     </linearGradient>
   </defs>
-  <rect width="32" height="32" rx="7" fill="#0a0a0c" />
-  <text
-    x="16"
-    y="23"
-    text-anchor="middle"
-    font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
-    font-weight="700"
-    font-size="20"
-    fill="url(#tl-grad-favicon)"
-  >t</text>
+  <rect x="12" y="8" width="176" height="198" rx="30" fill="#0a0a0c" />
+  <path
+    d="M100,124 C108,117 118,131 129,124 L129,171 C129,171 176,182 168,198 L32,198 C24,182 71,171 71,171 L71,124 C82,117 92,131 100,124 Z"
+    fill="url(#tl-fav-grad)"
+  />
+  <path
+    d="M80,20 L120,20 L120,28 C120,30 119,31 117,32 L117,90 L170,172 C176,182 178,188 178,192 C178,196 174,198 168,198 L32,198 C26,198 22,196 22,192 C22,188 24,182 30,172 L83,90 L83,32 C81,31 80,30 80,28 Z"
+    fill="none"
+    stroke="#f5f5f7"
+    stroke-width="10"
+    stroke-linejoin="round"
+    stroke-linecap="round"
+  />
 </svg>
