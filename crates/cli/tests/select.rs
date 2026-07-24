@@ -1,4 +1,4 @@
-//! `testless select` CLI e2e coverage (Plan 4, Task 2) — mirrors the
+//! `testless select` CLI e2e coverage (Plan 4, Task 2): mirrors the
 //! git/tempdir harness in `changes.rs`'s `cli_changes` module, but drives
 //! the `select` subcommand end to end: index -> diff -> classify -> walk
 //! `impacted_tests` -> wire-format output.
@@ -238,7 +238,7 @@ fn config_file_edit_forces_run_all_exit_2() {
     assert!(json["reason"].as_str().unwrap().contains("package.json"));
 }
 
-/// `--to` isn't supported yet in v1: documented punt, hard error exit 1 —
+/// `--to` isn't supported yet in v1: documented punt, hard error exit 1;
 /// mirrors `changes`'s identical rejection.
 #[test]
 fn to_flag_is_rejected() {
@@ -280,7 +280,7 @@ fn text_format_prints_file_and_name_lines() {
 }
 
 /// `--format args` prints `vitest run <file> -t '<pattern>'` lines on
-/// stdout — one per selected TS test — for the same body-edit scenario as
+/// stdout, one per selected TS test, for the same body-edit scenario as
 /// the JSON/text tests above (Plan 4 Task 3).
 #[test]
 fn args_format_prints_vitest_run_lines() {
@@ -442,7 +442,7 @@ fn init_go_repo() -> tempfile::TempDir {
 /// `t.Run` subtest is genuinely contained within its parent test function
 /// (the subtest closure only runs as part of `TestAdd`'s body executing),
 /// so the walker's `Contains`-parent widening (see `walk::impacted_tests`)
-/// sweeps the parent test in alongside its impacted subtests — unlike the
+/// sweeps the parent test in alongside its impacted subtests; unlike the
 /// TS `describe`/`it` fixture above, where `describe` isn't itself a
 /// `TestCase` def.
 #[test]
@@ -713,10 +713,10 @@ fn rust_comment_only_edit_yields_empty_tests() {
 // ---------------------------------------------------------------------
 // Module-init widening scenario (Plan 4, Task 4, TS): a changed top-level
 // `console.log` in `src/side.ts` must widen to every test in the
-// transitive importer closure of `side.ts` — `side.test.ts` (direct
+// transitive importer closure of `side.ts`: `side.test.ts` (direct
 // importer), `mid.test.ts` (imports `mid.ts`, which imports `side.ts`),
 // and `top.test.ts` (imports `top.ts`, which imports `mid.ts`, two hops
-// removed from `side.ts`) — while `unrelated.test.ts`, which imports
+// removed from `side.ts`), while `unrelated.test.ts`, which imports
 // nothing in the chain, stays excluded.
 // ---------------------------------------------------------------------
 
@@ -790,8 +790,8 @@ fn init_module_init_repo() -> tempfile::TempDir {
 }
 
 /// A top-level (module-init) edit in `side.ts` widens to every test in its
-/// transitive importer closure — including `top.test.ts`, two import hops
-/// removed — but not `unrelated.test.ts`.
+/// transitive importer closure: including `top.test.ts`, two import hops
+/// removed, but not `unrelated.test.ts`.
 #[test]
 fn module_init_edit_selects_all_transitive_importer_tests() {
     let tmp = init_module_init_repo();

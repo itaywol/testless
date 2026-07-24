@@ -4,12 +4,12 @@ use crate::graph::Graph;
 use crate::language::Extraction;
 
 /// One file's cached extraction, keyed by its repo-relative path and content
-/// hash — lets `index_repo_incremental` skip re-parsing files whose hash is
+/// hash: lets `index_repo_incremental` skip re-parsing files whose hash is
 /// unchanged since the last run.
 pub type CachedExtraction = (PathBuf, [u8; 32], Extraction);
 
 /// Magic + version prefix written before the bincode payload in the cache
-/// file. bincode's wire format is non-self-describing — it has no schema
+/// file. bincode's wire format is non-self-describing: it has no schema
 /// tag, so a `Graph`/`CachedExtraction` shape change can deserialize a
 /// stale cache into silently wrong data instead of failing loudly. This
 /// prefix gives `load` something concrete to check: bump it whenever the
@@ -20,7 +20,7 @@ const CACHE_MAGIC: &[u8; 4] = b"TST4";
 /// On-disk cache of a previous index run, rooted at `{repo}/.testless/`.
 ///
 /// Serialized with bincode, which is compact but not self-describing (no
-/// embedded schema/type info) — see [`CACHE_MAGIC`] for how `save`/`load`
+/// embedded schema/type info); see [`CACHE_MAGIC`] for how `save`/`load`
 /// guard against schema drift between binary versions.
 pub struct Cache {
     pub root: PathBuf,
@@ -34,7 +34,7 @@ impl Cache {
 
     /// Loads the cached `Graph` and per-file extractions. Returns `None` if
     /// the cache file is missing, unreadable, doesn't start with the
-    /// expected magic/version prefix, or fails to deserialize (corrupt) —
+    /// expected magic/version prefix, or fails to deserialize (corrupt);
     /// callers should silently fall back to a full rebuild.
     pub fn load(&self) -> Option<(Graph, Vec<CachedExtraction>)> {
         let bytes = std::fs::read(self.file()).ok()?;

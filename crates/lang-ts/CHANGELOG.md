@@ -24,7 +24,7 @@
 
 ### Bug Fixes
 
-* **lang-ts:** content-aware module-init skip — precise exported-def hashing ([73c7b7a](https://github.com/itaywol/testless/commit/73c7b7a571146d19aac2cebdfd0d00341426da27))
+* **lang-ts:** content-aware module-init skip: precise exported-def hashing ([73c7b7a](https://github.com/itaywol/testless/commit/73c7b7a571146d19aac2cebdfd0d00341426da27))
 * TS module-scope change visibility, git-status widening, review nits ([eba2664](https://github.com/itaywol/testless/commit/eba266441a6b1e5260131597aa197a867fc3eb46))
 
 

@@ -5,7 +5,7 @@
 
 ### Features
 
-* **cli:** select command — impacted-test selection output ([2a5a657](https://github.com/itaywol/testless/commit/2a5a657576a02a3a515291461a76666e5989ea24))
+* **cli:** select command: impacted-test selection output ([2a5a657](https://github.com/itaywol/testless/commit/2a5a657576a02a3a515291461a76666e5989ea24))
 * **core:** reverse-reachability impact walk with widening rules ([dc94950](https://github.com/itaywol/testless/commit/dc94950613f6c6a69b7b360b790ddddabd89008f))
 
 
@@ -18,7 +18,7 @@
 
 ### Features
 
-* **cli:** changes command — classified impact seeds ([073011e](https://github.com/itaywol/testless/commit/073011eaa0050f7ffd30160f2684d2508b91dc9f))
+* **cli:** changes command: classified impact seeds ([073011e](https://github.com/itaywol/testless/commit/073011eaa0050f7ffd30160f2684d2508b91dc9f))
 * **core:** change classification to impact seeds ([d6f53b7](https://github.com/itaywol/testless/commit/d6f53b7678d179eb3a2909ce19d9128f98cb48d0))
 * **core:** def-level structural diff with sig/body split ([2766107](https://github.com/itaywol/testless/commit/27661076be468812f1bcca7934ec439832a15a35))
 * **core:** git changed-file listing and rev file content ([fd1967d](https://github.com/itaywol/testless/commit/fd1967da1d7c93ecaeadd49daa6432f62cfe11ff))
@@ -65,5 +65,5 @@
 * **core:** dedup Imports edges and guard Go dir fan-out self-edges ([c11221f](https://github.com/itaywol/testless/commit/c11221f022cdc2a1990615f2ed10841a0984ef74))
 * **core:** test sort determinism, tighten strip_prefix, drop stale comment ([c692775](https://github.com/itaywol/testless/commit/c692775594bfb2369dce9ffce28ed52737c10dc2))
 * explicit crate versions for release-please cargo-workspace plugin ([b6f206d](https://github.com/itaywol/testless/commit/b6f206d3636cf232c0af9d18c034c268d7372986))
-* final-review batch — self-edge guard, cache version magic, test gaps ([a675735](https://github.com/itaywol/testless/commit/a675735f6a713d8bc7a48e1da70d889aa971d464))
+* final-review batch: self-edge guard, cache version magic, test gaps ([a675735](https://github.com/itaywol/testless/commit/a675735f6a713d8bc7a48e1da70d889aa971d464))
 * publishable crate versions, strict publish loop, review nits ([01b86d9](https://github.com/itaywol/testless/commit/01b86d9fce3d20ba0da79417587b4469da005964))

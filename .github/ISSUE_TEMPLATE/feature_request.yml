@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         Thanks for the suggestion. Please describe the problem before the
-        solution — it's easier to evaluate alternatives that way.
+        solution: it's easier to evaluate alternatives that way.
 
   - type: textarea
     id: problem
@@ -36,4 +36,4 @@ body:
     id: additional
     attributes:
       label: Additional context
-      description: Anything else — related issues, links, screenshots, example repos.
+      description: Anything else, related issues, links, screenshots, example repos.

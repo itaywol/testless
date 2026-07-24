@@ -26,7 +26,7 @@ struct Cli {
 }
 
 /// Output format for `select`. Defaults (when omitted) to `Json` on a piped
-/// stdout and `Text` on a terminal — the same TTY-sniffing convention as
+/// stdout and `Text` on a terminal: the same TTY-sniffing convention as
 /// `index`/`stats`/`changes`. `Args` is never a default: it must be asked
 /// for explicitly with `--format args`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -34,7 +34,7 @@ enum Format {
     Json,
     Text,
     /// Runner-consumable command lines (`vitest run ...`, `go test ...`,
-    /// `cargo test ...`) — one per selected test, via `format::command_lines`.
+    /// `cargo test ...`), one per selected test, via `format::command_lines`.
     Args,
 }
 
@@ -54,7 +54,7 @@ enum Cmd {
         /// Revision to diff from. Compared against the current worktree.
         #[arg(long, default_value = "HEAD")]
         from: String,
-        /// Revision to diff to. Not yet supported — v1 always compares
+        /// Revision to diff to. Not yet supported: v1 always compares
         /// `--from` against the worktree.
         #[arg(long)]
         to: Option<String>,
@@ -65,7 +65,7 @@ enum Cmd {
         /// Revision to diff from. Compared against the current worktree.
         #[arg(long, default_value = "HEAD")]
         from: String,
-        /// Revision to diff to. Not yet supported — v1 only diffs
+        /// Revision to diff to. Not yet supported: v1 only diffs
         /// `--from` against the worktree.
         #[arg(long)]
         to: Option<String>,
@@ -189,7 +189,7 @@ fn cmd_stats() -> Result<()> {
     let cwd = std::env::current_dir().context("getting current directory")?;
     let cache = cache_for(&cwd);
     let Some((graph, _extractions)) = cache.load() else {
-        anyhow::bail!("no index — run: testless index");
+        anyhow::bail!("no index, run: testless index");
     };
 
     let files = graph.files.len();
@@ -229,7 +229,7 @@ fn cmd_stats() -> Result<()> {
 
 /// Machine-readable label for a `SeedKind`, matching the wire format
 /// documented for `testless changes` (lowercase, snake_case for
-/// `ModuleInit`) — deliberately not `SeedKind`'s own `Serialize` (which
+/// `ModuleInit`), deliberately not `SeedKind`'s own `Serialize` (which
 /// would emit PascalCase variant names).
 fn seed_kind_label(kind: SeedKind) -> &'static str {
     match kind {
@@ -243,23 +243,23 @@ fn seed_kind_label(kind: SeedKind) -> &'static str {
 /// Shared `--from <rev>` pipeline for `changes` and `select`: incrementally
 /// (re)indexes the repo, diffs the worktree against `from`, classifies the
 /// change into a `ChangeMode`, and saves the (possibly freshly-parsed)
-/// cache — deliberately in that order.
+/// cache, deliberately in that order.
 ///
 /// `changed_files`/`classify` must run against the on-disk worktree before
 /// the cache is (re)written: saving first would leave a freshly-created (or
 /// freshly-modified) `.testless/graph.bin` sitting in the worktree, which
 /// `git ls-files --others` would then report as an untracked "changed" file
-/// in any repo that hasn't gitignored `.testless/` yet — polluting both the
+/// in any repo that hasn't gitignored `.testless/` yet, polluting both the
 /// `changed_files` stat and (harmlessly, but wastefully) the importer scan.
 ///
 /// Failure to list changed files (bad rev, `git` missing, an unrecognized
 /// git status token) degrades to a run-all fallback rather than a hard
-/// error — see Item 2 on `cmd_changes`'s original doc comment; callers
+/// error. See Item 2 on `cmd_changes`'s original doc comment; callers
 /// still map that to a distinct exit code, not a `main`-reported `Err`.
 ///
 /// Returns the graph, its cached per-file extractions, the classification,
 /// and the count of files `changed_files` reported (0 on the degrade-to-
-/// run-all path) — the last used only for stats reporting by callers.
+/// run-all path); the last is used only for stats reporting by callers.
 fn analyze(from: &str) -> Result<(Graph, Vec<CachedExtraction>, ChangeMode, usize)> {
     let cwd = std::env::current_dir().context("getting current directory")?;
     let reg = registry();
@@ -366,7 +366,7 @@ fn cmd_changes(from: String, to: Option<String>) -> Result<i32> {
 /// The test-runner label for a def's file language, per the `select` wire
 /// contract: `ts` -> `vitest`, `go` -> `gotest`, `rust` -> `cargo`. Any
 /// other/future registered language degrades to `"unknown"` rather than
-/// erroring — a missing runner mapping shouldn't crash test selection.
+/// erroring: a missing runner mapping shouldn't crash test selection.
 fn runner_for_lang(lang: &str) -> &'static str {
     match lang {
         "ts" => "vitest",
@@ -387,7 +387,7 @@ struct SelectedTest {
     lang: String,
     /// Mirrors `Def::computed_name`: set when any segment of `name` was
     /// truncated because a later segment couldn't be statically resolved
-    /// (e.g. a template-literal test title) — consumers should widen their
+    /// (e.g. a template-literal test title); consumers should widen their
     /// match pattern rather than expect an exact `name` match.
     computed: bool,
 }
@@ -395,7 +395,7 @@ struct SelectedTest {
 /// `--from <rev>` diffed against the current worktree, classified, and
 /// (for a `Selection`) walked out to the impacted `TestCase` defs via
 /// `walk::impacted_tests`. Returns the process exit code: 0 for a
-/// selection (including an empty one), 2 for run-all — mirroring
+/// selection (including an empty one), 2 for run-all, mirroring
 /// `cmd_changes`'s exit-code contract exactly.
 fn cmd_select(from: String, to: Option<String>, format: Option<Format>) -> Result<i32> {
     if to.is_some() {
@@ -404,7 +404,7 @@ fn cmd_select(from: String, to: Option<String>, format: Option<Format>) -> Resul
 
     let (graph, _extractions, mode, changed_count) = analyze(&from)?;
     // `--format` always wins; omitted, it sniffs the TTY like `changes`
-    // does. `Args` is never the sniffed default — it must be requested.
+    // does. `Args` is never the sniffed default; it must be requested.
     let resolved_format = format.unwrap_or_else(|| {
         if std::io::stdout().is_terminal() {
             Format::Text
@@ -427,7 +427,7 @@ fn cmd_select(from: String, to: Option<String>, format: Option<Format>) -> Resul
                     println!("{out}");
                 }
                 // `args`'s stdout contract is "runner-consumable command
-                // lines, nothing else" — a run-all reason isn't one of
+                // lines, nothing else"; a run-all reason isn't one of
                 // those, so it goes to stderr instead, same as the
                 // selection footer below.
                 Format::Args => eprintln!("run all: {reason}"),

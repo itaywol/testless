@@ -95,7 +95,7 @@ describe("math", () => {
         .iter()
         .all(|d| !d.test_id.as_ref().unwrap().is_empty()));
     // The def must be attributed to the OUTER curried call (`it.each(table)("adds %i and %i", cb)`),
-    // which spans through the callback's closing `});` on line 9 — not the INNER
+    // which spans through the callback's closing `});` on line 9, not the INNER
     // `it.each(table)` call alone, which ends at the array's closing `])` on line 7.
     // Before the fix, the inner call was misclassified as its own (spurious) Leaf,
     // so its span stopped at line 7 and the real callback body was never attributed

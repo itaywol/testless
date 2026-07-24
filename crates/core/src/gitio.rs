@@ -1,5 +1,5 @@
 //! Git integration: shells out to the `git` binary via `std::process::Command`
-//! rather than linking libgit2 (dependency-weight decision — see Plan 3 Task 3
+//! rather than linking libgit2 (dependency-weight decision: see Plan 3 Task 3
 //! brief). Two operations are exposed: listing changed files between two
 //! revisions (or a revision and the worktree), and reading a file's content at
 //! a given revision.
@@ -87,7 +87,7 @@ pub fn changed_files(repo: &Path, from: &str, to: Option<&str>) -> Result<Vec<Ch
 ///
 /// Uncommon statuses degrade rather than error: `T` (type change, e.g. file
 /// <-> symlink) maps to `Modified`, and `C<score>` (copy) maps to `Added` for
-/// the new path — both are sound over-approximations (Item 2). `U`
+/// the new path; both are sound over-approximations (Item 2). `U`
 /// (unmerged) and anything else unrecognized still fall through to the error
 /// arm: those genuinely can't be soundly classified here.
 fn parse_name_status(raw: &str) -> Result<Vec<ChangedFile>> {

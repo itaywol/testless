@@ -219,7 +219,7 @@ fn unresolved_calls_become_unknown_markers() {
 fn self_only_candidate_recursion_still_widens_to_unknown() {
     // `solo` recursively calls itself and is the *only* def named `solo` in
     // scope, so every raw candidate is filtered out by the self-edge guard.
-    // The ref must still yield ≥1 edge — it falls through to `Unknown`
+    // The ref must still yield ≥1 edge; it falls through to `Unknown`
     // rather than silently vanishing, since a same-named symbol whose
     // import failed to resolve would look identical and must not be
     // dropped without a trace.

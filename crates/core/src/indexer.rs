@@ -28,7 +28,7 @@ pub fn index_repo(root: &Path, registry: &Registry) -> Result<Graph> {
 /// Like [`index_repo`], but hash-gated against `prev`: files whose blake3
 /// hash matches a previous run reuse that run's `Extraction` instead of
 /// being re-parsed. The `Graph` is always rebuilt fresh from the full set of
-/// (reused + newly parsed) extractions — edges are cheap pure lookups, so
+/// (reused + newly parsed) extractions; edges are cheap pure lookups, so
 /// there's no in-place patching and no risk of dangling ids. Deleted files
 /// drop out naturally since they're no longer in the discovered set; renames
 /// are just a delete + an add.
@@ -60,7 +60,7 @@ pub fn index_repo_incremental(
     let mut hashes: Vec<[u8; 32]> = Vec::with_capacity(files.len());
     let mut extractions: Vec<Extraction> = Vec::with_capacity(files.len());
     // Per-file base offset into `graph.defs`, aligned by index with
-    // `files`/`extractions` — lets pass 3 map an `ExtractedRef.from_def`
+    // `files`/`extractions`; lets pass 3 map an `ExtractedRef.from_def`
     // (an index into that file's own `Extraction.defs`) back to a `DefId`.
     let mut file_def_base: Vec<usize> = Vec::with_capacity(files.len());
 
@@ -186,8 +186,8 @@ pub fn index_repo_incremental(
     // Pass 3: resolve calls/reads to tier-1 candidates. Scope for a ref in
     // file F is F itself plus every file F `Imports` (reusing `seen`, which
     // pass 2 already built as exactly that from/to set). Defs are indexed
-    // under their *short* name — a method def like `Calc.push` is indexed
-    // under `push` too — so a bare-identifier ref matches both plain
+    // under their *short* name: a method def like `Calc.push` is indexed
+    // under `push` too, so a bare-identifier ref matches both plain
     // functions and qualified methods whether or not `ref.qualifier` is
     // set (the receiver variable rarely equals the type name, so this is a
     // deliberate over-approximation). `ModuleInit` defs (name `<module>`)
@@ -198,7 +198,7 @@ pub fn index_repo_incremental(
         imports_of.entry(*from).or_default().push(*to);
     }
 
-    // Keyed by file first, then short name — lets `candidates_for` look up
+    // Keyed by file first, then short name; lets `candidates_for` look up
     // `by_short_name.get(f).and_then(|m| m.get(name))` with a borrowed
     // `&str` instead of allocating a `String` per lookup per scope file.
     let mut by_short_name: HashMap<FileId, HashMap<String, Vec<DefId>>> = HashMap::new();
@@ -239,7 +239,7 @@ pub fn index_repo_incremental(
         for r in &extraction.calls {
             let from = DefId((base + r.from_def) as u32);
             // `emitted` tracks whether this ref produced at least one
-            // `Resolved` edge (new or already-deduped) — not just whether
+            // `Resolved` edge (new or already-deduped), not just whether
             // `candidates` was non-empty. A ref whose only candidates are
             // all self-edges (e.g. recursion where the recursive callee is
             // the sole same-named def in scope) must still widen to
