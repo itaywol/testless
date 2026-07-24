@@ -71,9 +71,16 @@ jobs:
       - name: Publish npm packages
         env:
           GH_TOKEN: ${{ github.token }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          tag="${GITHUB_REF_NAME}"
-          version="${tag#testless-v}"
+          if [[ "${GITHUB_REF_NAME}" == testless-v* ]]; then
+            version="${GITHUB_REF_NAME#testless-v}"
+          else
+            # workflow_dispatch from a branch: publish the version already
+            # released on crates.io, using that release's binary assets
+            version=$(grep -m1 '^version = ' crates/cli/Cargo.toml | cut -d'"' -f2)
+          fi
+          tag="testless-v${version}"
 
           workdir=$(mktemp -d)
           gh release download "$tag" --dir "$workdir" --pattern 'testless-*.tar.gz'

@@ -1,3 +1,10 @@
+# testless demo. Regenerate:
+#   1. cargo build --release -p testless
+#   2. demo repo at /tmp/demo: src/{math,format,greet}.ts + matching *.test.ts
+#      (fmt calls add; greet unrelated), .gitignore with ".testless/", git committed
+#   3. JetBrains Mono visible to fontconfig (XDG_DATA_HOME with fonts/)
+#   4. cd /tmp/demo && PATH=.../target/release:$PATH vhs this-file
+
 Output "/home/itay/Work/testless/assets/demo.gif"
 
 Set Shell "bash"
@@ -10,17 +17,17 @@ Set Padding 30
 Set Margin 0
 Set BorderRadius 0
 Set WindowBar Colorful
-Set TypingSpeed 45ms
+Set TypingSpeed 35ms
 Set Framerate 24
 
 Hide
 Type `export PS1='\[\e[1;35m\]❯\[\e[0m\] ' && clear`
 Enter
-Sleep 800ms
+Sleep 300ms
+Type "testless index"
 Show
 
-Sleep 600ms
-Type "testless index"
+Sleep 700ms
 Enter
 Sleep 2s
 
@@ -30,7 +37,7 @@ Sleep 1200ms
 
 Type "testless select --from HEAD"
 Enter
-Sleep 3s
+Sleep 2.5s
 
 Type "testless select --from HEAD --format args"
 Enter

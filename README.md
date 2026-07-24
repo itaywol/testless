@@ -12,7 +12,7 @@
 ## Install
 
 **JS/TS**: `npm i -D testless` (or `npx testless`)
-**Go**: `curl -fsSL https://raw.githubusercontent.com/itaywol/testless/main/install.sh | sh`
+**Go**: `curl -fsSL https://testless.itaywol.tools/install.sh | sh`
 **Rust**: `cargo binstall testless` (or `cargo install testless`)
 
 Prebuilt binaries: [Releases](https://github.com/itaywol/testless/releases).
