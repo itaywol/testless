@@ -360,3 +360,25 @@ footer {
   font-size: 0.85rem;
   color: rgba(255, 255, 255, 0.45);
 }
+
+.logo-lockup {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+.logo-mark { width: 92px; height: auto; }
+.wordmark {
+  font-size: 3.4rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: #e8e8f0;
+}
+.wordmark em {
+  font-style: normal;
+  background: linear-gradient(90deg, #2dd4bf, #8b5cf6);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}

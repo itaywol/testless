@@ -1,7 +1,7 @@
 <p align="center">
   <br>
   <a href="https://testless.itaywol.tools" target="_blank" rel="noopener noreferrer">
-    <img alt="testless" src="assets/logo.svg" height="56">
+    <img alt="testless" src="assets/logo-animated.svg" height="72">
   </a>
   <br>
 </p>

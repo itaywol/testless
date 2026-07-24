@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-10 0 420 116" width="420" height="116">
+  <defs>
+    <linearGradient id="gw" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2dd4bf"/><stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+  </defs>
+  <style>
+    @keyframes pendulum { 0%, 100% { transform: rotate(-7deg); } 50% { transform: rotate(7deg); } }
+    @keyframes counterslosh { 0%, 100% { transform: rotate(5deg); } 50% { transform: rotate(-5deg); } }
+    @keyframes bubble { 0% { transform: translateY(0); opacity: 0; } 15% { opacity: 0.85; } 100% { transform: translateY(-26px); opacity: 0; } }
+    @keyframes twirl { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -109; } }
+    .pend { animation: pendulum 0.9s ease-in-out infinite; transform-origin: 50px 106px; }
+    .slosh { animation: counterslosh 0.9s ease-in-out infinite; transform-origin: 50px 76px; }
+    .bub { animation: bubble 1.6s ease-in infinite; }
+    .bub2 { animation-delay: 0.5s; }
+    .tw1, .tw2, .tw3 { animation: twirl 0.9s linear infinite; stroke-linecap: butt; fill: none; }
+    .tw1 { stroke-dasharray: 0 28 16 65; stroke-width: 3.6; }
+    .tw2 { stroke-dasharray: 0 14 30 65; stroke-width: 2.4; }
+    .tw3 { stroke-dasharray: 44 65; stroke-width: 1.3; }
+    @media (prefers-reduced-motion: reduce) {
+      .pend, .slosh, .bub, .bub2, .tw1, .tw2, .tw3 { animation: none; }
+    }
+  </style>
+  <defs>
+    <linearGradient id="ga" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2dd4bf"/><stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="gv" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2dd4bf"/><stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <filter id="fa" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="6"/>
+    </filter>
+    <clipPath id="cb"><path d="M44 16 h12 v28 a30 30 0 1 1 -12 0 z"/></clipPath>
+    <clipPath id="twf"><rect x="10" y="16" width="80" height="14"/></clipPath>
+  </defs>
+  <g opacity="0.35">
+    <ellipse class="tw3" cx="50" cy="16" rx="26" ry="4.5" stroke="url(#gv)"/>
+    <ellipse class="tw2" cx="50" cy="16" rx="26" ry="4.5" stroke="url(#gv)"/>
+    <ellipse class="tw1" cx="50" cy="16" rx="26" ry="4.5" stroke="url(#gv)"/>
+  </g>
+  <g class="pend">
+    <path d="M44 16 h12 v28 a30 30 0 1 1 -12 0 z" fill="url(#ga)" opacity="0.7" filter="url(#fa)"/>
+    <g clip-path="url(#cb)">
+      <rect x="10" y="46" width="80" height="68" fill="url(#ga)"/>
+      <g class="slosh">
+        <path d="M-6 50 q14 -7 28 0 t28 0 t28 0 t28 0 v-16 h-112 z" fill="#0b0b10" opacity="0.92"/>
+      </g>
+      <circle class="bub" cx="44" cy="94" r="2.2" fill="#e8fffb" opacity="0.85"/>
+      <circle class="bub bub2" cx="56" cy="98" r="1.7" fill="#e8fffb" opacity="0.85"/>
+    </g>
+    <path d="M44 16 h12 v28 a30 30 0 1 1 -12 0 z" fill="none" stroke="#e8e8f0" stroke-width="3"/>
+    <rect x="40" y="12" width="20" height="6" rx="3" fill="#e8e8f0"/>
+  </g>
+  <ellipse class="tw3" cx="50" cy="16" rx="26" ry="4.5" stroke="url(#gv)" clip-path="url(#twf)" opacity="0.9"/>
+  <ellipse class="tw2" cx="50" cy="16" rx="26" ry="4.5" stroke="url(#gv)" clip-path="url(#twf)" opacity="0.9"/>
+  <ellipse class="tw1" cx="50" cy="16" rx="26" ry="4.5" stroke="url(#gv)" clip-path="url(#twf)" opacity="0.9"/>
+
+  <text x="128" y="82" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif"
+        font-size="56" font-weight="700" letter-spacing="-1">
+    <tspan fill="#9aa0b0">test</tspan><tspan fill="url(#gw)">less</tspan>
+  </text>
+</svg>
