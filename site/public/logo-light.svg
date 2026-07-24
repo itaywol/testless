@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 90" role="img" aria-labelledby="testless-logo-light-title">
+  <title id="testless-logo-light-title">testless</title>
+  <defs>
+    <linearGradient id="tl-grad-light" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d9488" />
+      <stop offset="100%" stop-color="#7e22ce" />
+    </linearGradient>
+  </defs>
+  <text
+    x="4"
+    y="64"
+    font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+    font-weight="700"
+    font-size="64"
+    letter-spacing="-1"
+    fill="#0a0a0c"
+  >test<tspan fill="url(#tl-grad-light)">less</tspan></text>
+  <line x1="180" y1="38" x2="352" y2="38" stroke="url(#tl-grad-light)" stroke-width="4" stroke-linecap="round" opacity="0.85" />
+</svg>
