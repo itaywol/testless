@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.5.1](https://github.com/itaywol/testless/compare/testless-v0.5.0...testless-v0.5.1) (2026-07-24)
+
+
+### Miscellaneous Chores
+
+* release with package readmes ([ed14b4e](https://github.com/itaywol/testless/commit/ed14b4e6d7e7c03921d7fcb32b3ec822d80af858))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * testless-core bumped from 0.5.0 to 0.5.1
+    * testless-lang-ts bumped from 0.5.0 to 0.5.1
+    * testless-lang-go bumped from 0.5.0 to 0.5.1
+    * testless-lang-rust bumped from 0.5.0 to 0.5.1
+
 ## [0.5.0](https://github.com/itaywol/testless/compare/testless-v0.4.0...testless-v0.5.0) (2026-07-24)
 
 
