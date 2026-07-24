@@ -5,6 +5,7 @@ edition.workspace = true
 description = "TypeScript/JavaScript language plugin for testless"
 repository.workspace = true
 license.workspace = true
+readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
