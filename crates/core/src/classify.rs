@@ -15,6 +15,15 @@
 //!    its own tests died with it. (A `Renamed` file is handled by rule 4
 //!    instead: its old content is diffed directly against its new-path
 //!    content, so rename semantics are unaffected.)
+//!
+//!    A deleted **Go** file is a special case (Go imports name package
+//!    *directories*, never file stems, and same-package sibling files
+//!    reference each other via nothing at all): see [`seed_go_deletion`].
+//!
+//!    A deleted file that *is* indexed but whose name yields no usable scan
+//!    needle (see [`stem_needles`]) can't be soundly narrowed by the stem
+//!    scan at all; rather than silently under-selecting (contributing zero
+//!    seeds when a real importer might exist), this escalates to `RunAll`.
 //! 3. Added indexed file -> seed its `TestCase` defs and its `ModuleInit`,
 //!    both `SeedKind::Added` (new exports; nothing referenced them before).
 //! 4. Modified/Renamed indexed file -> re-parse old vs. new content with
@@ -23,7 +32,11 @@
 //!    *indexed* file's raw import text references it (substring match on
 //!    basename, e.g. an import of `"./config.json"` matches changed path
 //!    `config.json`), seed that importer's `ModuleInit`; otherwise the file
-//!    contributes zero seeds (e.g. a README edit).
+//!    contributes zero seeds (e.g. a README edit). Unlike rule 2, a missing
+//!    scan needle here just yields no *extra* seeds rather than escalating:
+//!    an unindexed file was never a selection candidate itself, so the
+//!    stakes of under-selecting its (rare, short-named) importers are
+//!    accepted.
 //! 6. Any I/O/parse error anywhere -> `RunAll` with a reason naming the
 //!    file.
 //!
@@ -129,6 +142,10 @@ pub fn classify(
         match classify_one(repo, new_graph, registry, c, old_src_of) {
             Ok(PerFile::Seeds(mut s)) => seeds.append(&mut s),
             Ok(PerFile::ScanImporters(path)) => needs_import_scan.push(path),
+            Ok(PerFile::SeedsAndScan(mut s, mut paths)) => {
+                seeds.append(&mut s);
+                needs_import_scan.append(&mut paths);
+            }
             Err(reason) => return ChangeMode::RunAll { reason },
         }
     }
@@ -153,6 +170,11 @@ enum PerFile {
     /// or not). Batched up for a single pass over every indexed file's raw
     /// imports.
     ScanImporters(PathBuf),
+    /// A deleted Go file: seeds found directly (its surviving package
+    /// siblings' `ModuleInit`, see [`seed_go_deletion`]) plus one or more
+    /// extra paths for the raw-import stem scan (the deleted file's own
+    /// path, and its package directory).
+    SeedsAndScan(Vec<Seed>, Vec<PathBuf>),
 }
 
 fn classify_one(
@@ -167,6 +189,22 @@ fn classify_one(
         // to parse: fall back to the raw-import stem scan so any surviving
         // importer's now-dangling reference still seeds that importer's
         // `ModuleInit` (see rule 2's doc comment above).
+        if let Some(lang) = registry.for_path(&c.path) {
+            if lang.id() == "go" {
+                return seed_go_deletion(new_graph, &c.path);
+            }
+            if stem_needles(&c.path).is_empty() {
+                // An indexed file whose name is too short to yield any
+                // usable scan needle (see `stem_needles`): the stem scan
+                // below would silently find nothing, which for an
+                // *indexed* deleted file is an under-select, not a benign
+                // zero-seed result. Escalate rather than guess.
+                return Err(format!(
+                    "deleted indexed file {} has no usable stem (<{MIN_STEM_LEN} chars) to find importers",
+                    c.path.display()
+                ));
+            }
+        }
         return Ok(PerFile::ScanImporters(c.path.clone()));
     }
 
@@ -263,32 +301,49 @@ fn seed_added_file(new_graph: &Graph, file_id: FileId) -> Vec<Seed> {
     seeds
 }
 
+/// Minimum length (in chars) a [`stem_needles`] candidate must have to be
+/// used as a substring match in [`scan_importers`]. Below this, a "match"
+/// is more likely a false positive (e.g. stem `"io"` inside unrelated
+/// `"studio"`) than a real reference, so short candidates are dropped
+/// rather than trusted (Item 4).
+const MIN_STEM_LEN: usize = 3;
+
+/// The substring needles [`scan_importers`] uses for `path`: its full
+/// basename (e.g. `config.json`) and its extension-stripped stem (e.g.
+/// `config`, covering an extensionless import specifier like `import cfg
+/// from "./config"`), each kept only when at least [`MIN_STEM_LEN`] chars
+/// long. Empty when both candidates are too short (or `path` has no
+/// usable file name at all).
+fn stem_needles(path: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        if name.chars().count() >= MIN_STEM_LEN {
+            out.push(name.to_string());
+        }
+    }
+    if let Some(stem) = path.file_stem().and_then(|n| n.to_str()) {
+        if stem.chars().count() >= MIN_STEM_LEN && out.iter().all(|s| s != stem) {
+            out.push(stem.to_string());
+        }
+    }
+    out
+}
+
 /// Scan every already-indexed file's raw import text (from `extractions`,
 /// which lines up index-for-index with `new_graph.files`; no re-reading or
-/// re-parsing) for a reference to any of `changed_paths` (basename substring
-/// match: both the full basename, e.g. `config.json`, and the basename with
-/// its extension stripped, e.g. `config`, so an extensionless import
-/// specifier like `import cfg from "./config"` still matches a changed
-/// `config.json`). Each match seeds that importing file's `ModuleInit`.
-/// `changed_paths` may be files with no registered `Language` *or* deleted
-/// files (indexed or not) — either way there's no def-level diff to run, so
-/// this stem scan is the only way to find who's affected.
+/// re-parsing) for a reference to any of `changed_paths` (substring match
+/// against each path's [`stem_needles`]). Each match seeds that importing
+/// file's `ModuleInit`. `changed_paths` may be files with no registered
+/// `Language`, deleted files (indexed or not), or (for a deleted Go file,
+/// see [`seed_go_deletion`]) a package directory path — either way there's
+/// no def-level diff to run, so this stem scan is the only way to find
+/// who's affected.
 fn scan_importers(
     new_graph: &Graph,
     extractions: &[CachedExtraction],
     changed_paths: &[PathBuf],
 ) -> Vec<Seed> {
-    let mut stems: Vec<&str> = Vec::new();
-    for p in changed_paths {
-        if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-            stems.push(name);
-        }
-        if let Some(stem) = p.file_stem().and_then(|n| n.to_str()) {
-            if !stem.is_empty() {
-                stems.push(stem);
-            }
-        }
-    }
+    let stems: Vec<String> = changed_paths.iter().flat_map(|p| stem_needles(p)).collect();
     if stems.is_empty() {
         return Vec::new();
     }
@@ -298,8 +353,71 @@ fn scan_importers(
         let matched = extraction
             .imports
             .iter()
-            .any(|imp| stems.iter().any(|stem| imp.raw.contains(stem)));
+            .any(|imp| stems.iter().any(|stem| imp.raw.contains(stem.as_str())));
         if matched {
+            let file_id = FileId(i as u32);
+            if let Some(m) = new_graph.module_init(file_id) {
+                seeds.push(Seed {
+                    def: m,
+                    kind: SeedKind::ModuleInit,
+                });
+            }
+        }
+    }
+    seeds
+}
+
+/// A deleted **Go** source file: Go imports name package *directories*
+/// (e.g. `example.com/m/pkg`), never a file's stem, and files within the
+/// same package don't import each other at all (no statement references a
+/// same-package sibling by name). So neither half of the ordinary deleted-
+/// file handling (rule 2) can find the right seeds on its own:
+///
+/// - The basename/stem scan (`scan_importers` via `stem_needles`) never
+///   matches a same-package sibling, since nothing imports it by name.
+/// - It also can't find *other* packages' importers unless it's given the
+///   package directory's own name as a needle (an import of
+///   `example.com/m/pkg` contains `pkg`, the directory's basename).
+///
+/// Fix: (a) directly seed the `ModuleInit` of every surviving `new_graph`
+/// file in the same directory as `deleted_path` (its package siblings,
+/// including any test file — [`sibling_module_inits`]), and (b) still run
+/// the ordinary stem scan, but with the package directory's path folded in
+/// as an extra needle source alongside the deleted file's own path.
+///
+/// If neither the deleted file's own name nor its package directory's name
+/// yields a usable [`stem_needles`] candidate, this can't soundly rule out
+/// an importer in another package — same as the non-Go short-stem case,
+/// escalates to `RunAll` rather than silently under-selecting.
+fn seed_go_deletion(new_graph: &Graph, deleted_path: &Path) -> Result<PerFile, String> {
+    let seeds = sibling_module_inits(new_graph, deleted_path);
+
+    let mut scan_paths = vec![deleted_path.to_path_buf()];
+    if let Some(dir) = deleted_path.parent() {
+        if !dir.as_os_str().is_empty() {
+            scan_paths.push(dir.to_path_buf());
+        }
+    }
+
+    let has_needle = scan_paths.iter().any(|p| !stem_needles(p).is_empty());
+    if !has_needle {
+        return Err(format!(
+            "deleted go file {} (and its package directory) has no usable stem (<{MIN_STEM_LEN} chars) to find importers",
+            deleted_path.display()
+        ));
+    }
+
+    Ok(PerFile::SeedsAndScan(seeds, scan_paths))
+}
+
+/// Every `new_graph` file sharing `deleted_path`'s parent directory (i.e.
+/// its Go package siblings, including test files), paired with its
+/// `ModuleInit` def where present, as `SeedKind::ModuleInit` seeds.
+fn sibling_module_inits(new_graph: &Graph, deleted_path: &Path) -> Vec<Seed> {
+    let dir = deleted_path.parent();
+    let mut seeds = Vec::new();
+    for (i, f) in new_graph.files.iter().enumerate() {
+        if f.path.parent() == dir {
             let file_id = FileId(i as u32);
             if let Some(m) = new_graph.module_init(file_id) {
                 seeds.push(Seed {

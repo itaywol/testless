@@ -185,10 +185,13 @@ fn resolve_rev(repo: &Path, rev: &str) -> Result<String> {
 /// root instead of the caller's actual worktree, so `--from`/`--to` can name
 /// any two revisions rather than only `--from` vs. the live worktree.
 ///
-/// Lives at `$TMPDIR/testless-to-<full-sha-of-rev>`: the sha suffix (not the
-/// raw `rev` string, which might not be filesystem-safe, e.g. `origin/main`)
-/// makes the location deterministic and collision-safe across concurrent
-/// runs against the same rev.
+/// Lives at `$TMPDIR/testless-to-<full-sha-of-rev>-<pid>`: the sha suffix
+/// (not the raw `rev` string, which might not be filesystem-safe, e.g.
+/// `origin/main`) makes the location deterministic per revision, and the
+/// trailing pid suffix keeps two concurrent `testless` processes analyzing
+/// the *same* rev (e.g. two CI jobs racing the same PR) from colliding on
+/// one worktree — each process gets its own, since `git worktree add`
+/// refuses to reuse a path/registration another checkout is still using.
 ///
 /// Removed on drop (`git worktree remove --force`, then `git worktree
 /// prune`) — including on an early return via `?` anywhere between creation
@@ -206,7 +209,8 @@ impl TempWorktree {
     /// `resolve_rev`), not a silent no-op.
     pub fn create(repo: &Path, rev: &str) -> Result<Self> {
         let sha = resolve_rev(repo, rev).with_context(|| format!("resolving --to rev {rev:?}"))?;
-        let path = std::env::temp_dir().join(format!("testless-to-{sha}"));
+        let pid = std::process::id();
+        let path = std::env::temp_dir().join(format!("testless-to-{sha}-{pid}"));
 
         // A leftover directory/registration from a previous crashed or
         // force-killed run would otherwise make `git worktree add` fail

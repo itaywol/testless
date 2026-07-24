@@ -366,10 +366,22 @@ fn analyze(
 
     let (mode, changed_count) = match gitio::changed_files(&cwd, from, to) {
         Ok(changed) => {
-            let mode = classify(root, &graph, &reg, &changed, &extractions, &|p| {
+            let changed_count = changed.len();
+            // Files matching testless.toml's `ignore` globs were dropped at
+            // discovery time (see `discover`/`index_repo_incremental`
+            // above), so they're absent from `graph`/`extractions`; routing
+            // one into `classify` would hit its "indexed file missing from
+            // new graph" error path and force a spurious `RunAll`. `ignore`
+            // is discovery-level (see `config` module docs): a matching
+            // change must contribute zero seeds, not run everything.
+            let filtered: Vec<_> = changed
+                .into_iter()
+                .filter(|c| !ignore.is_match(&c.path))
+                .collect();
+            let mode = classify(root, &graph, &reg, &filtered, &extractions, &|p| {
                 gitio::show_file(&cwd, from, p)
             });
-            (mode, changed.len())
+            (mode, changed_count)
         }
         Err(err) => {
             let reason = format!("listing files changed since --from: {err:#}");

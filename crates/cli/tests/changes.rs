@@ -566,6 +566,75 @@ fn extensionless_import_matches_changed_file_by_stem() {
     );
 }
 
+/// (i) Go's imports name package *directories*, never file stems, and
+/// same-package sibling files reference each other via nothing at all (no
+/// import statement). Deleting `pkg/helper.go` (whose `init()` a sibling
+/// test depends on structurally, since `init` folds into the file's
+/// `<module>`) must still seed the surviving same-package siblings'
+/// `ModuleInit` — the stem-based importer scan alone finds nothing here
+/// (no file anywhere imports the literal text `helper`/`helper.go`), so
+/// before this fix the selection was empty (issue: Go file deletion
+/// under-selects).
+#[test]
+fn deleted_go_file_seeds_package_siblings_module_init() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write(root, "go.mod", "module example.com/m\n\ngo 1.22\n");
+    write(
+        root,
+        "pkg/widget.go",
+        "package pkg\n\nfunc Widget() int { return 1 }\n",
+    );
+    write(
+        root,
+        "pkg/widget_test.go",
+        "package pkg\n\nimport \"testing\"\n\nfunc TestWidget(t *testing.T) {\n\tif Widget() != 1 {\n\t\tt.Fail()\n\t}\n}\n",
+    );
+
+    let registry = Registry::new(vec![Box::new(testless_lang_go::GoLanguage)]);
+    let (graph, extractions, _) = index_repo_incremental(root, &registry, None, None).unwrap();
+
+    let test_file_id = testless_core::FileId(
+        graph
+            .files
+            .iter()
+            .position(|f| f.path.ends_with("widget_test.go"))
+            .unwrap() as u32,
+    );
+    let test_module_init = graph
+        .module_init(test_file_id)
+        .expect("module_init present");
+
+    // helper.go (a third file in the same package, never written to disk
+    // here: it's the file being deleted) held the sibling this test's
+    // `<module>` depended on. Its own `<module>` hash included an `init()`
+    // whose body a sibling test structurally depended on; deleting it must
+    // still seed the surviving siblings' `ModuleInit`.
+    let changed = vec![ChangedFile {
+        path: PathBuf::from("pkg/helper.go"),
+        status: FileStatus::Deleted,
+    }];
+
+    let mode = classify(
+        root,
+        &graph,
+        &registry,
+        &changed,
+        &extractions,
+        &no_old_content,
+    );
+    match mode {
+        ChangeMode::Selection(seeds) => {
+            assert!(!seeds.is_empty(), "expected a non-empty selection");
+            assert!(
+                seeds.iter().any(|s| s.def == test_module_init),
+                "expected the package test file's ModuleInit seeded, got {seeds:?}"
+            );
+        }
+        other => panic!("expected Selection (not RunAll), got {other:?}"),
+    }
+}
+
 // --- `testless changes` CLI e2e coverage (Plan 3, Task 5) --------------
 
 mod cli_changes {
@@ -745,6 +814,43 @@ mod cli_changes {
                 .any(|s| s["def"] == "add" && s["kind"] == "body"),
             "expected an add/body seed, got {seeds:?}"
         );
+    }
+
+    /// A modified file matching `testless.toml`'s `ignore` globs is
+    /// discovery-level dropped (never indexed, see `discover`), so before
+    /// this fix it hit `classify`'s "indexed file missing from new graph"
+    /// error path and forced `run_all`. `ignore`'s contract is that a
+    /// matching change contributes zero seeds, same as any other change
+    /// `testless` can prove has no impact — not a blanket run-everything.
+    #[test]
+    fn ignored_file_change_yields_empty_selection_not_run_all() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src/generated")).unwrap();
+        std::fs::write(root.join("src/generated/api.ts"), "export const x = 1;\n").unwrap();
+        std::fs::write(
+            root.join("testless.toml"),
+            "ignore = [\"**/generated/**\"]\n",
+        )
+        .unwrap();
+        git(root, &["init", "-b", "main"]);
+        git(root, &["add", "-A"]);
+        git(root, &["commit", "-m", "initial"]);
+
+        std::fs::write(root.join("src/generated/api.ts"), "export const x = 2;\n").unwrap();
+
+        let assert = Command::cargo_bin("testless")
+            .unwrap()
+            .arg("changes")
+            .current_dir(root)
+            .assert()
+            .success();
+        let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+        let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| {
+            panic!("expected JSON stdout, got {out:?} ({e})");
+        });
+        assert_eq!(json["mode"], "selection");
+        assert_eq!(json["seeds"].as_array().unwrap().len(), 0);
     }
 
     /// A `--to` rev that doesn't resolve locally degrades to the same
