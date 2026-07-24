@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.6.0](https://github.com/itaywol/testless/compare/testless-v0.5.1...testless-v0.6.0) (2026-07-24)
+
+
+### Features
+
+* **cli:** why command explains selection paths ([#14](https://github.com/itaywol/testless/issues/14)) ([0f3314f](https://github.com/itaywol/testless/commit/0f3314f8411d230e902729e675bce38a37b331d2))
+* select/changes/why across arbitrary rev ranges via --to ([#17](https://github.com/itaywol/testless/issues/17)) ([b3a63b5](https://github.com/itaywol/testless/commit/b3a63b58f9443a851627e5b87f5dedca499e04ce))
+* testless.toml with always-run and ignore globs ([#15](https://github.com/itaywol/testless/issues/15)) ([a2bde1f](https://github.com/itaywol/testless/commit/a2bde1f52b38a43cbc45231ed02b7a4dcfec6511))
+
+
+### Bug Fixes
+
+* **core:** scope unknown-call widening to import-reachable files ([#20](https://github.com/itaywol/testless/issues/20)) ([850b7c6](https://github.com/itaywol/testless/commit/850b7c6c5fa24f8b2e28d4a8d2e8954b1fc640ce))
+* **core:** seed deleted-file importers instead of run_all ([#13](https://github.com/itaywol/testless/issues/13)) ([742d0a9](https://github.com/itaywol/testless/commit/742d0a9fb15ff1e6d49c4a9a98f3a92d6bbae6d7))
+* sound Go deletion seeding, ignored-change zero-seeds, review nits ([4d17aa0](https://github.com/itaywol/testless/commit/4d17aa07943d612cc825827096d309810f410e1e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * testless-core bumped from 0.5.1 to 0.6.0
+    * testless-lang-ts bumped from 0.5.1 to 0.6.0
+    * testless-lang-go bumped from 0.5.1 to 0.6.0
+    * testless-lang-rust bumped from 0.5.1 to 0.6.0
+
 ## [0.5.1](https://github.com/itaywol/testless/compare/testless-v0.5.0...testless-v0.5.1) (2026-07-24)
 
 

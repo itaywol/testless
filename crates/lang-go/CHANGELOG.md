@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0](https://github.com/itaywol/testless/compare/testless-lang-go-v0.5.1...testless-lang-go-v0.6.0) (2026-07-24)
+
+
+### Bug Fixes
+
+* **lang-go:** include import aliases in read known-names ([e8f27b9](https://github.com/itaywol/testless/commit/e8f27b998549f85203d4268a6020932401204f6c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * testless-core bumped from 0.5.1 to 0.6.0
+
 ## [0.5.1](https://github.com/itaywol/testless/compare/testless-lang-go-v0.5.0...testless-lang-go-v0.5.1) (2026-07-24)
 
 

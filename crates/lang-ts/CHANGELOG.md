@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0](https://github.com/itaywol/testless/compare/testless-lang-ts-v0.5.1...testless-lang-ts-v0.6.0) (2026-07-24)
+
+
+### Bug Fixes
+
+* **lang-ts:** attribute class-field initializer refs to the class ([e09b5cf](https://github.com/itaywol/testless/commit/e09b5cf0ec02c8186fb5d37dee4ab3b8217513d8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * testless-core bumped from 0.5.1 to 0.6.0
+
 ## [0.5.1](https://github.com/itaywol/testless/compare/testless-lang-ts-v0.5.0...testless-lang-ts-v0.5.1) (2026-07-24)
 
 
