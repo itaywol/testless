@@ -112,5 +112,12 @@ jobs:
           ' "$version"
 
           for pkg in testless-linux-x64 testless-linux-arm64 testless-darwin-x64 testless-darwin-arm64 testless; do
-            npm publish --access public "./npm/${pkg}"
+            out=$(npm publish --access public "./npm/${pkg}" 2>&1) && { echo "$out" | tail -1; continue; }
+            if echo "$out" | grep -qi "cannot publish over\|previously published"; then
+              echo "already published: ${pkg}, skipping"
+            else
+              echo "$out" >&2
+              echo "publish failed for ${pkg}" >&2
+              exit 1
+            fi
           done
