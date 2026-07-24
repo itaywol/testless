@@ -48,8 +48,33 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use serde::{Deserialize, Serialize};
+
 use crate::classify::Seed;
 use crate::graph::{CallTarget, DefId, DefKind, Edge, FileId, Graph};
+
+/// Which reverse edge a `Hop` crossed; mirrors the module doc comment's
+/// edge-by-edge rule list above, plus `ImportCloses` for the module-init
+/// importer-closure widening step (crossing from a changed module's init
+/// into a file that transitively imports it, or into that file's own
+/// tests).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum HopKind {
+    Calls,
+    Reads,
+    Contains,
+    UnknownName(String),
+    ImportCloses,
+}
+
+/// One step of a reconstructed seed -> test impact path: `from` (already
+/// impacted) reached `to` (newly impacted) via `edge`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Hop {
+    pub from: DefId,
+    pub edge: HopKind,
+    pub to: DefId,
+}
 
 /// All `TestCase` defs impacted by `seeds`, per the spec's reverse-
 /// reachability rules. Deterministic order (ascending `DefId`).
@@ -62,14 +87,32 @@ use crate::graph::{CallTarget, DefId, DefKind, Edge, FileId, Graph};
 /// eventually skip re-walking callers) and for richer reporting; it's
 /// reserved, not dead weight.
 pub fn impacted_tests(graph: &Graph, seeds: &[Seed]) -> Vec<DefId> {
+    impacted_tests_with_paths(graph, seeds)
+        .into_iter()
+        .map(|(d, _path)| d)
+        .collect()
+}
+
+/// Same selection semantics as `impacted_tests`, but additionally
+/// reconstructs, for each selected test, the shortest seed -> test hop path
+/// (the BFS's first-discovery parent pointer chain). Used by `testless why`
+/// to explain a selection; `impacted_tests` is a thin wrapper around this
+/// that discards the paths.
+pub fn impacted_tests_with_paths(graph: &Graph, seeds: &[Seed]) -> Vec<(DefId, Vec<Hop>)> {
     let index = ReverseIndex::build(graph);
 
     let mut visited: HashSet<DefId> = HashSet::new();
     let mut queue: VecDeque<DefId> = VecDeque::new();
     let mut tests: HashSet<DefId> = HashSet::new();
+    // First-discovery parent pointer per def, recorded the moment a def is
+    // newly enqueued via some reverse edge (never for seeds, which are the
+    // roots of the walk's implicit forest). Since `visited` blocks
+    // rediscovery, the first hop recorded here is always the shortest
+    // (fewest-hops) path from *some* seed back to that def.
+    let mut predecessors: HashMap<DefId, Hop> = HashMap::new();
 
     for seed in seeds {
-        enqueue(&mut queue, &mut visited, seed.def);
+        enqueue_root(&mut queue, &mut visited, seed.def);
     }
 
     while let Some(d) = queue.pop_front() {
@@ -83,12 +126,26 @@ pub fn impacted_tests(graph: &Graph, seeds: &[Seed]) -> Vec<DefId> {
 
         if let Some(callers) = index.callers.get(&d) {
             for &c in callers {
-                enqueue(&mut queue, &mut visited, c);
+                enqueue_hop(
+                    &mut queue,
+                    &mut visited,
+                    &mut predecessors,
+                    d,
+                    HopKind::Calls,
+                    c,
+                );
             }
         }
         if let Some(readers) = index.readers.get(&d) {
             for &r in readers {
-                enqueue(&mut queue, &mut visited, r);
+                enqueue_hop(
+                    &mut queue,
+                    &mut visited,
+                    &mut predecessors,
+                    d,
+                    HopKind::Reads,
+                    r,
+                );
             }
         }
         if let Some(&parent) = index.containers.get(&d) {
@@ -108,14 +165,28 @@ pub fn impacted_tests(graph: &Graph, seeds: &[Seed]) -> Vec<DefId> {
             // closure loop enqueuing `ModuleInit`s directly (never through
             // this `containers` edge).
             if graph.def(parent).kind != DefKind::ModuleInit {
-                enqueue(&mut queue, &mut visited, parent);
+                enqueue_hop(
+                    &mut queue,
+                    &mut visited,
+                    &mut predecessors,
+                    d,
+                    HopKind::Contains,
+                    parent,
+                );
             }
         }
         if let Some(unknown_callers) = index.unknown_by_name.get(short_name(&def.name)) {
             for &c in unknown_callers {
                 let caller_file = graph.def(c).file;
                 if index.imports_reach(caller_file, def.file) {
-                    enqueue(&mut queue, &mut visited, c);
+                    enqueue_hop(
+                        &mut queue,
+                        &mut visited,
+                        &mut predecessors,
+                        d,
+                        HopKind::UnknownName(short_name(&def.name).to_string()),
+                        c,
+                    );
                 }
             }
         }
@@ -123,7 +194,14 @@ pub fn impacted_tests(graph: &Graph, seeds: &[Seed]) -> Vec<DefId> {
         if def.kind == DefKind::ModuleInit {
             for file in index.importer_closure(def.file) {
                 if let Some(m) = graph.module_init(file) {
-                    enqueue(&mut queue, &mut visited, m);
+                    enqueue_hop(
+                        &mut queue,
+                        &mut visited,
+                        &mut predecessors,
+                        d,
+                        HopKind::ImportCloses,
+                        m,
+                    );
                 }
                 for (id, file_def) in graph.defs_in_file(file) {
                     if file_def.kind == DefKind::TestCase {
@@ -133,7 +211,14 @@ pub fn impacted_tests(graph: &Graph, seeds: &[Seed]) -> Vec<DefId> {
                         // otherwise a test helper collected here would
                         // silently stop the walk short of any external
                         // caller of that helper.
-                        enqueue(&mut queue, &mut visited, id);
+                        enqueue_hop(
+                            &mut queue,
+                            &mut visited,
+                            &mut predecessors,
+                            d,
+                            HopKind::ImportCloses,
+                            id,
+                        );
                     }
                 }
             }
@@ -143,12 +228,58 @@ pub fn impacted_tests(graph: &Graph, seeds: &[Seed]) -> Vec<DefId> {
     let mut result: Vec<DefId> = tests.into_iter().collect();
     result.sort();
     result
+        .into_iter()
+        .map(|t| {
+            let path = reconstruct_path(&predecessors, t);
+            (t, path)
+        })
+        .collect()
 }
 
-fn enqueue(queue: &mut VecDeque<DefId>, visited: &mut HashSet<DefId>, d: DefId) {
+/// Enqueue a seed: the root of a BFS tree, so it never gets a `predecessors`
+/// entry (that's how `reconstruct_path` knows to stop climbing).
+fn enqueue_root(queue: &mut VecDeque<DefId>, visited: &mut HashSet<DefId>, d: DefId) {
     if visited.insert(d) {
         queue.push_back(d);
     }
+}
+
+/// Enqueue `to`, discovered via a reverse edge of kind `kind` from the
+/// already-impacted `from`. Records `to`'s first-discovery parent pointer
+/// (skipped if `to` was already visited, e.g. a seed or a def reached
+/// earlier via a shorter path).
+fn enqueue_hop(
+    queue: &mut VecDeque<DefId>,
+    visited: &mut HashSet<DefId>,
+    predecessors: &mut HashMap<DefId, Hop>,
+    from: DefId,
+    kind: HopKind,
+    to: DefId,
+) {
+    if visited.insert(to) {
+        predecessors.insert(
+            to,
+            Hop {
+                from,
+                edge: kind,
+                to,
+            },
+        );
+        queue.push_back(to);
+    }
+}
+
+/// Walks `predecessors` backward from `d` (a selected test) to its seed
+/// root, collecting each `Hop` crossed, then reverses the result into
+/// seed -> test order.
+fn reconstruct_path(predecessors: &HashMap<DefId, Hop>, mut d: DefId) -> Vec<Hop> {
+    let mut hops = Vec::new();
+    while let Some(hop) = predecessors.get(&d) {
+        hops.push(hop.clone());
+        d = hop.from;
+    }
+    hops.reverse();
+    hops
 }
 
 /// The last `.`-separated segment of a def's name (methods are recorded as
@@ -630,6 +761,46 @@ mod tests {
 
         let result = impacted_tests(&g, &[seed(bar)]);
         assert_eq!(result, vec![t]);
+    }
+
+    /// `impacted_tests_with_paths` records the shortest seed -> test hop
+    /// chain: `add <- calculate <- t1` (seed `add`) reconstructs as exactly
+    /// two `Calls` hops, in seed-to-test order.
+    #[test]
+    fn path_recording_two_hops_in_order() {
+        let mut g = g();
+        let f = file(&mut g, "a.ts");
+        let add = def(&mut g, "add", DefKind::Function, f);
+        let calculate = def(&mut g, "calculate", DefKind::Function, f);
+        let t1 = def(&mut g, "t1", DefKind::TestCase, f);
+        g.add_edge(Edge::Calls {
+            from: calculate,
+            to: CallTarget::Resolved(add),
+        });
+        g.add_edge(Edge::Calls {
+            from: t1,
+            to: CallTarget::Resolved(calculate),
+        });
+
+        let result = impacted_tests_with_paths(&g, &[seed(add)]);
+        assert_eq!(result.len(), 1);
+        let (test_id, path) = &result[0];
+        assert_eq!(*test_id, t1);
+        assert_eq!(
+            path,
+            &vec![
+                Hop {
+                    from: add,
+                    edge: HopKind::Calls,
+                    to: calculate,
+                },
+                Hop {
+                    from: calculate,
+                    edge: HopKind::Calls,
+                    to: t1,
+                },
+            ]
+        );
     }
 
     #[test]

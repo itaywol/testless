@@ -9,16 +9,16 @@ mod format;
 use testless_core::cache::{Cache, CachedExtraction};
 use testless_core::classify::{classify, ChangeMode, SeedKind};
 use testless_core::gitio;
-use testless_core::graph::{CallTarget, DefKind, Edge, Graph};
+use testless_core::graph::{CallTarget, DefId, DefKind, Edge, Graph};
 use testless_core::indexer::index_repo_incremental;
-use testless_core::walk::impacted_tests;
+use testless_core::walk::{impacted_tests, impacted_tests_with_paths, Hop, HopKind};
 use testless_core::Registry;
 
 #[derive(Parser)]
 #[command(
     name = "testless",
     version,
-    after_help = "Examples:\n  testless index\n  testless stats\n  testless changes --from origin/main\n  testless select --from origin/main\n  testless select --from origin/main --format args\n  testless completion zsh > _testless"
+    after_help = "Examples:\n  testless index\n  testless stats\n  testless changes --from origin/main\n  testless select --from origin/main\n  testless select --from origin/main --format args\n  testless why \"formats a sum\"\n  testless completion zsh > _testless"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -73,6 +73,17 @@ enum Cmd {
         /// when it's a terminal.
         #[arg(long, value_enum)]
         format: Option<Format>,
+    },
+    /// Explain why a test was selected: prints the hop path from a change
+    /// seed to the matching test.
+    Why {
+        /// Which test to explain. Forgiving substring match against
+        /// `<file> :: <name chain>` (e.g. a bare test name, a file path
+        /// prefix, or the full `file :: chain` string all work).
+        test_id: String,
+        /// Revision to diff from. Compared against the current worktree.
+        #[arg(long, default_value = "HEAD")]
+        from: String,
     },
     /// Generate a shell completion script and print it to stdout.
     Completion {
@@ -513,6 +524,234 @@ fn cmd_select(from: String, to: Option<String>, format: Option<Format>) -> Resul
     Ok(0)
 }
 
+/// A selected test that matched a `why` query, along with its
+/// seed -> test hop path (from `walk::impacted_tests_with_paths`) and the
+/// `<file> :: <name chain>` string `test_id` was matched against.
+struct WhyCandidate {
+    file: std::path::PathBuf,
+    name: Vec<String>,
+    path: Vec<Hop>,
+    match_str: String,
+}
+
+/// Human-facing verb phrase for a hop's edge kind, used as the prefix of
+/// every non-final line in `print_why_text` (e.g. `called by fmt (...)`).
+fn hop_kind_label(kind: &HopKind) -> String {
+    match kind {
+        HopKind::Calls => "called by".to_string(),
+        HopKind::Reads => "read by".to_string(),
+        HopKind::Contains => "contained in".to_string(),
+        HopKind::ImportCloses => "imported by".to_string(),
+        HopKind::UnknownName(name) => format!("possibly called by (unresolved name \"{name}\")"),
+    }
+}
+
+/// Machine-readable label for a hop's edge kind, matching the lowercase
+/// snake_case convention `seed_kind_label` already established for the
+/// wire format. `UnknownName` carries its matched name, so it serializes
+/// as a small object instead of a bare string.
+fn hop_kind_json(kind: &HopKind) -> serde_json::Value {
+    match kind {
+        HopKind::Calls => serde_json::json!("calls"),
+        HopKind::Reads => serde_json::json!("reads"),
+        HopKind::Contains => serde_json::json!("contains"),
+        HopKind::ImportCloses => serde_json::json!("import_closes"),
+        HopKind::UnknownName(name) => serde_json::json!({ "unknown_name": name }),
+    }
+}
+
+/// A def's display name and file path, looked up by `DefId`. Shared by both
+/// `why` renderers so a hop's endpoints are always rendered identically.
+fn def_display(graph: &Graph, id: DefId) -> (String, std::path::PathBuf) {
+    let def = graph.def(id);
+    (
+        def.name.clone(),
+        graph.files[def.file.0 as usize].path.clone(),
+    )
+}
+
+/// `why`'s human output, one line per hop: the seed (path's first hop's
+/// `from`) renders as `changed <name> (<file>)`; every intermediate hop
+/// renders as `  <verb> <name> (<file>)` (e.g. `  called by fmt (...)`,
+/// `  read by ...`); the final hop (arriving at the matched test itself)
+/// always renders as `  = test "<name chain>" (<file>)` regardless of its
+/// edge kind, since it's the destination, not another impacted def. A test
+/// that's itself a seed (empty path, e.g. a newly `Added` test) has no
+/// preceding `changed` line: just the bare `= test ...` line. Returns lines
+/// rather than printing directly so it's unit-testable without capturing
+/// stdout; `print_why_text` is the printing wrapper callers actually use.
+fn why_text_lines(graph: &Graph, candidate: &WhyCandidate) -> Vec<String> {
+    let test_name = candidate.name.join(" > ");
+    if candidate.path.is_empty() {
+        return vec![format!(
+            "= test \"{test_name}\" ({})",
+            candidate.file.display()
+        )];
+    }
+
+    let mut lines = Vec::with_capacity(candidate.path.len() + 1);
+    let (seed_name, seed_file) = def_display(graph, candidate.path[0].from);
+    lines.push(format!("changed {seed_name} ({})", seed_file.display()));
+
+    let last = candidate.path.len() - 1;
+    for (i, hop) in candidate.path.iter().enumerate() {
+        if i == last {
+            lines.push(format!(
+                "  = test \"{test_name}\" ({})",
+                candidate.file.display()
+            ));
+        } else {
+            let (name, file) = def_display(graph, hop.to);
+            lines.push(format!(
+                "  {} {name} ({})",
+                hop_kind_label(&hop.edge),
+                file.display()
+            ));
+        }
+    }
+    lines
+}
+
+fn print_why_text(graph: &Graph, candidate: &WhyCandidate) {
+    for line in why_text_lines(graph, candidate) {
+        println!("{line}");
+    }
+}
+
+/// `why`'s JSON output for an unambiguous match: `{"version":1,"test":
+/// {...},"path":[{"from":{...},"edge":...,"to":{...}}, ...]}`, each hop
+/// endpoint rendered as `{"name":..., "file":...}` via `def_display`.
+fn why_json(graph: &Graph, candidate: &WhyCandidate) -> serde_json::Value {
+    let path_json: Vec<_> = candidate
+        .path
+        .iter()
+        .map(|hop| {
+            let (from_name, from_file) = def_display(graph, hop.from);
+            let (to_name, to_file) = def_display(graph, hop.to);
+            serde_json::json!({
+                "from": { "name": from_name, "file": from_file },
+                "edge": hop_kind_json(&hop.edge),
+                "to": { "name": to_name, "file": to_file },
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "version": 1,
+        "mode": "explained",
+        "test": {
+            "file": candidate.file,
+            "name": candidate.name,
+        },
+        "path": path_json,
+    })
+}
+
+/// `testless why <test-id>`: explain why a test was (or wasn't) selected,
+/// by running the same analyze+walk pipeline as `select` and printing the
+/// seed -> test hop path for whichever selected test matches `test_id`.
+///
+/// Matching is deliberately forgiving: `test_id` is a substring match
+/// against `<file> :: <name chain>` (so a bare test name, a file path, or
+/// the full string all work). Zero matches means the test wasn't among
+/// this change's selected tests (exit 1); more than one lists every
+/// matching candidate rather than guessing (exit 1). Exactly one match
+/// prints its path (exit 0). A run-all classification short-circuits with
+/// the same reason/exit-code (2) contract as `select`/`changes`: there's no
+/// specific walk to explain when everything runs.
+fn cmd_why(test_id: String, from: String) -> Result<i32> {
+    let (graph, _extractions, mode, _changed_count) = analyze(&from)?;
+    let is_tty = std::io::stdout().is_terminal();
+
+    let seeds = match mode {
+        ChangeMode::Selection(seeds) => seeds,
+        ChangeMode::RunAll { reason } => {
+            if is_tty {
+                println!("run all: {reason}");
+            } else {
+                let out = serde_json::json!({
+                    "version": 1,
+                    "mode": "run_all",
+                    "reason": reason,
+                });
+                println!("{out}");
+            }
+            return Ok(2);
+        }
+    };
+
+    let with_paths = impacted_tests_with_paths(&graph, &seeds);
+    let candidates: Vec<WhyCandidate> = with_paths
+        .into_iter()
+        .map(|(id, path)| {
+            let def = graph.def(id);
+            let file = graph.files[def.file.0 as usize].path.clone();
+            let name = def
+                .test_id
+                .clone()
+                .unwrap_or_else(|| vec![def.name.clone()]);
+            let match_str = format!("{} :: {}", file.display(), name.join(" > "));
+            WhyCandidate {
+                file,
+                name,
+                path,
+                match_str,
+            }
+        })
+        .collect();
+
+    let matches: Vec<&WhyCandidate> = candidates
+        .iter()
+        .filter(|c| c.match_str.contains(&test_id))
+        .collect();
+
+    match matches.len() {
+        0 => {
+            if is_tty {
+                println!("not selected: no impacted test matches \"{test_id}\"");
+            } else {
+                let out = serde_json::json!({
+                    "version": 1,
+                    "mode": "not_selected",
+                    "query": test_id,
+                });
+                println!("{out}");
+            }
+            Ok(1)
+        }
+        1 => {
+            let candidate = matches[0];
+            if is_tty {
+                print_why_text(&graph, candidate);
+            } else {
+                println!("{}", why_json(&graph, candidate));
+            }
+            Ok(0)
+        }
+        _ => {
+            if is_tty {
+                println!("ambiguous match for \"{test_id}\", candidates:");
+                for c in &matches {
+                    println!("  {}", c.match_str);
+                }
+            } else {
+                let candidates_json: Vec<_> = matches
+                    .iter()
+                    .map(|c| serde_json::json!({ "file": c.file, "name": c.name }))
+                    .collect();
+                let out = serde_json::json!({
+                    "version": 1,
+                    "mode": "ambiguous",
+                    "query": test_id,
+                    "candidates": candidates_json,
+                });
+                println!("{out}");
+            }
+            Ok(1)
+        }
+    }
+}
+
 fn cmd_completion(shell: clap_complete::Shell) -> Result<()> {
     clap_complete::generate(
         shell,
@@ -530,6 +769,7 @@ fn main() {
         Cmd::Stats => cmd_stats().map(|()| 0),
         Cmd::Changes { from, to } => cmd_changes(from, to),
         Cmd::Select { from, to, format } => cmd_select(from, to, format),
+        Cmd::Why { test_id, from } => cmd_why(test_id, from),
         Cmd::Completion { shell } => cmd_completion(shell).map(|()| 0),
     };
 
@@ -546,5 +786,119 @@ fn main() {
             }
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod why_tests {
+    use super::*;
+    use std::path::PathBuf;
+    use testless_core::graph::{Def, DefKind, FileNode};
+
+    fn file(g: &mut Graph, path: &str) -> testless_core::graph::FileId {
+        g.add_file(FileNode {
+            path: PathBuf::from(path),
+            hash: [0; 32],
+            lang: "ts".into(),
+        })
+    }
+
+    fn def(g: &mut Graph, name: &str, kind: DefKind, file: testless_core::graph::FileId) -> DefId {
+        g.add_def(Def {
+            name: name.into(),
+            kind,
+            file,
+            start_line: 1,
+            end_line: 2,
+            test_id: None,
+            computed_name: false,
+        })
+    }
+
+    #[test]
+    fn why_text_lines_two_hop_path() {
+        // changed add (src/math.ts) -> called by fmt (src/format.ts) ->
+        // = test "formats a sum" (src/format.test.ts)
+        let mut g = Graph::default();
+        let math_file = file(&mut g, "src/math.ts");
+        let format_file = file(&mut g, "src/format.ts");
+        let test_file = file(&mut g, "src/format.test.ts");
+        let add = def(&mut g, "add", DefKind::Function, math_file);
+        let fmt = def(&mut g, "fmt", DefKind::Function, format_file);
+
+        let candidate = WhyCandidate {
+            file: PathBuf::from("src/format.test.ts"),
+            name: vec!["formats a sum".to_string()],
+            path: vec![
+                Hop {
+                    from: add,
+                    edge: HopKind::Calls,
+                    to: fmt,
+                },
+                Hop {
+                    from: fmt,
+                    edge: HopKind::Reads,
+                    to: def(&mut g, "formats a sum", DefKind::TestCase, test_file),
+                },
+            ],
+            match_str: "src/format.test.ts :: formats a sum".to_string(),
+        };
+
+        let lines = why_text_lines(&g, &candidate);
+        assert_eq!(
+            lines,
+            vec![
+                "changed add (src/math.ts)".to_string(),
+                "  called by fmt (src/format.ts)".to_string(),
+                "  = test \"formats a sum\" (src/format.test.ts)".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn why_text_lines_empty_path_is_bare_test_line() {
+        let mut g = Graph::default();
+        let test_file = file(&mut g, "src/a.test.ts");
+        def(&mut g, "t", DefKind::TestCase, test_file);
+
+        let candidate = WhyCandidate {
+            file: PathBuf::from("src/a.test.ts"),
+            name: vec!["t".to_string()],
+            path: vec![],
+            match_str: "src/a.test.ts :: t".to_string(),
+        };
+
+        let lines = why_text_lines(&g, &candidate);
+        assert_eq!(lines, vec!["= test \"t\" (src/a.test.ts)".to_string()]);
+    }
+
+    #[test]
+    fn hop_kind_label_covers_every_variant() {
+        assert_eq!(hop_kind_label(&HopKind::Calls), "called by");
+        assert_eq!(hop_kind_label(&HopKind::Reads), "read by");
+        assert_eq!(hop_kind_label(&HopKind::Contains), "contained in");
+        assert_eq!(hop_kind_label(&HopKind::ImportCloses), "imported by");
+        assert_eq!(
+            hop_kind_label(&HopKind::UnknownName("add".to_string())),
+            "possibly called by (unresolved name \"add\")"
+        );
+    }
+
+    #[test]
+    fn hop_kind_json_labels() {
+        assert_eq!(hop_kind_json(&HopKind::Calls), serde_json::json!("calls"));
+        assert_eq!(hop_kind_json(&HopKind::Reads), serde_json::json!("reads"));
+        assert_eq!(
+            hop_kind_json(&HopKind::Contains),
+            serde_json::json!("contains")
+        );
+        assert_eq!(
+            hop_kind_json(&HopKind::ImportCloses),
+            serde_json::json!("import_closes")
+        );
+        assert_eq!(
+            hop_kind_json(&HopKind::UnknownName("add".to_string())),
+            serde_json::json!({ "unknown_name": "add" })
+        );
     }
 }
