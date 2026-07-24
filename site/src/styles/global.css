@@ -353,3 +353,10 @@ footer {
     align-items: flex-start;
   }
 }
+
+.demo-scale {
+  margin-top: 1.25rem;
+  text-align: center;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.45);
+}
