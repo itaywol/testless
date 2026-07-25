@@ -1,0 +1,39 @@
+name: site-deploy
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", ".github/workflows/site-deploy.yml"]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check deploy credentials
+        id: creds
+        run: |
+          if [ -n "${{ secrets.CLOUDFLARE_API_TOKEN }}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "CLOUDFLARE_API_TOKEN not set; skipping deploy (local wrangler deploys still work)"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.creds.outputs.present == 'true'
+        with: { node-version: "24" }
+      - name: Build
+        if: steps.creds.outputs.present == 'true'
+        env:
+          PUBLIC_POSTHOG_KEY: ${{ vars.POSTHOG_KEY }}
+        working-directory: site
+        run: |
+          npm ci
+          npm run build
+      - name: Deploy
+        if: steps.creds.outputs.present == 'true'
+        working-directory: site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler deploy
