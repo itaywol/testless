@@ -133,14 +133,15 @@ pub fn index_repo_incremental(
     }
 
     // Pass 2: resolve imports now that every file is indexed. A resolved
-    // path that matches an indexed file exactly gets a single edge; a Go
-    // package-directory result fans out to every *other* indexed file
-    // directly under that directory (excluding the importing file itself,
-    // so a file importing its own package doesn't get a self-edge).
-    // `seen` dedups repeated imports of the same target from the same file
-    // (e.g. a type-only import alongside a value import of the same
-    // module) down to a single `Imports` edge.
-    // Built once so exact-path and Go dir-fanout import resolution are O(1)
+    // path that matches an indexed file exactly gets a single edge; a
+    // directory result (a Go package, or a Java wildcard import like
+    // `import a.b.*;`) fans out to every *other* indexed file directly
+    // under that directory (excluding the importing file itself, so a file
+    // importing its own package doesn't get a self-edge). `seen` dedups
+    // repeated imports of the same target from the same file (e.g. a
+    // type-only import alongside a value import of the same module) down to
+    // a single `Imports` edge.
+    // Built once so exact-path and dir-fanout import resolution are O(1)
     // hashmap lookups instead of an O(files) scan per import.
     let path_to_file: HashMap<PathBuf, FileId> = graph
         .files
@@ -193,12 +194,13 @@ pub fn index_repo_incremental(
 
     // Pass 3: resolve calls/reads to tier-1 candidates. Scope for a ref in
     // file F is F itself plus every file F `Imports` (reusing `seen`, which
-    // pass 2 already built as exactly that from/to set) plus, for Go only,
-    // every sibling file in F's own package directory (see the `lang.id()
-    // == "go"` scope extension below): Go's unit of visibility is the
-    // package, not the file, and a file can never `import` its own
-    // package, so cross-file same-package calls would otherwise always
-    // resolve as `Unknown` even though they're entirely unambiguous. Defs
+    // pass 2 already built as exactly that from/to set) plus, for
+    // package-scoped languages (see `Language::package_key`; Go and Java
+    // today), every other file in F's own package: their unit of
+    // visibility is the package, not the file, and a file can never
+    // `import` its own package, so cross-file same-package calls would
+    // otherwise always resolve as `Unknown` even though they're entirely
+    // unambiguous. Defs
     // are indexed under their *short* name: a method def like `Calc.push`
     // is indexed under `push` too, so a bare-identifier ref matches both
     // plain functions and qualified methods whether or not `ref.qualifier`
@@ -209,6 +211,22 @@ pub fn index_repo_incremental(
     let mut imports_of: HashMap<FileId, Vec<FileId>> = HashMap::new();
     for (from, to) in &seen {
         imports_of.entry(*from).or_default().push(*to);
+    }
+
+    // Package-scoped languages (`Language::package_key`) group by package
+    // rather than by directory: a Java package legitimately spans two
+    // parallel source roots (`src/main/java` and `src/test/java`), so the
+    // directory index built for import fanout above can't answer this.
+    // Keyed by language id as well, so two languages' keys can never
+    // collide.
+    let mut package_to_files: HashMap<(&'static str, PathBuf), Vec<FileId>> = HashMap::new();
+    for (i, (rel_path, lang)) in files.iter().enumerate() {
+        if let Some(key) = lang.package_key(rel_path) {
+            package_to_files
+                .entry((lang.id(), key))
+                .or_default()
+                .push(FileId(i as u32));
+        }
     }
 
     // Keyed by file first, then short name; lets `candidates_for` look up
@@ -241,11 +259,9 @@ pub fn index_repo_incremental(
         if let Some(targets) = imports_of.get(&file_id) {
             scope.extend(targets.iter().copied());
         }
-        if lang.id() == "go" {
-            if let Some(dir) = rel_path.parent() {
-                if let Some(siblings) = dir_to_files.get(dir) {
-                    scope.extend(siblings.iter().copied().filter(|&f| f != file_id));
-                }
+        if let Some(key) = lang.package_key(rel_path) {
+            if let Some(siblings) = package_to_files.get(&(lang.id(), key)) {
+                scope.extend(siblings.iter().copied().filter(|&f| f != file_id));
             }
         }
         let candidates_for = |name: &str| -> Vec<DefId> {

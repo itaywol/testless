@@ -16,6 +16,13 @@ impl Language for GoLanguage {
         &["go"]
     }
 
+    /// A Go package *is* a directory, so the directory is the key:
+    /// same-package siblings reference each other with no import statement
+    /// at all.
+    fn package_key(&self, file: &Path) -> Option<PathBuf> {
+        Some(file.parent().unwrap_or(Path::new("")).to_path_buf())
+    }
+
     fn grammar(&self, _path: &Path) -> tree_sitter::Language {
         tree_sitter_go::LANGUAGE.into()
     }

@@ -44,7 +44,7 @@ Prebuilt binaries on [Releases](https://github.com/itaywol/testless/releases). N
 ```bash
 testless index                                    # build the graph (.testless/)
 testless select --from origin/main                # tests impacted by your changes
-testless select --from origin/main --format args  # runnable vitest / go test / cargo test lines
+testless select --from origin/main --format args  # runnable vitest / go test / cargo / gradle lines
 ```
 
 JSON when piped, human text on a TTY. On fallback-to-everything, `--format args`
@@ -71,17 +71,27 @@ Optional `testless.toml` at the repo root, for the cases static inference can't 
 ```toml
 always-run = ["tests/smoke/**", "**/*.e2e.test.ts"]  # always select these tests
 ignore = ["**/generated/**", "*.pb.go"]               # never index these files
+java-runner = "gradle"                                # force maven|gradle, else sniffed
 ```
 
 ## Languages
 
-TypeScript / JavaScript (vitest, jest `-t` patterns) · Go (`go test -run`) · Rust (`cargo test`)
+| Language | Tests it reads | Commands it prints |
+|---|---|---|
+| TypeScript / JavaScript | vitest, jest | `vitest run <file> -t <name>` |
+| Go | `testing`, `t.Run` subtests | `go test ./pkg -run '^Test$/^sub$'` |
+| Rust | `#[test]`, module chains | `cargo test path::name -- --exact` |
+| Java | JUnit 5 (`@Test`, `@ParameterizedTest`, `@Nested`) | `gradle test --tests C.m` / `mvn test -Dtest='C#m'` |
+
+Java picks Maven or Gradle from the nearest `pom.xml` / `build.gradle`, per
+module; override with `java-runner` in `testless.toml`. Multi-module builds are
+scoped automatically (`-pl <module>`, `:module:test`).
 
 A new language is roughly one plugin file: see [CONTRIBUTING](CONTRIBUTING.md).
 
 ## Status
 
-Young project. The selection engine works end to end on all three languages;
+Young project. The selection engine works end to end on all four languages;
 precision improves release by release. Roadmap lives in
 [issues](https://github.com/itaywol/testless/issues).
 

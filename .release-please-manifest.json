@@ -3,5 +3,6 @@
   "crates/lang-ts": "0.6.0",
   "crates/lang-go": "0.6.0",
   "crates/lang-rust": "0.6.0",
+  "crates/lang-java": "0.6.0",
   "crates/cli": "0.6.0"
 }

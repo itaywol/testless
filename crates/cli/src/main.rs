@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 
 mod format;
+mod runner;
 
 use testless_core::cache::{Cache, CachedExtraction};
 use testless_core::classify::{classify, ChangeMode, SeedKind};
@@ -110,6 +111,7 @@ fn registry() -> Registry {
         Box::new(testless_lang_ts::TsLanguage),
         Box::new(testless_lang_go::GoLanguage),
         Box::new(testless_lang_rust::RustLanguage),
+        Box::new(testless_lang_java::JavaLanguage::default()),
     ])
 }
 
@@ -486,19 +488,6 @@ fn selected_test_defs(
     Ok(selected.into_iter().collect())
 }
 
-/// The test-runner label for a def's file language, per the `select` wire
-/// contract: `ts` -> `vitest`, `go` -> `gotest`, `rust` -> `cargo`. Any
-/// other/future registered language degrades to `"unknown"` rather than
-/// erroring: a missing runner mapping shouldn't crash test selection.
-fn runner_for_lang(lang: &str) -> &'static str {
-    match lang {
-        "ts" => "vitest",
-        "go" => "gotest",
-        "rust" => "cargo",
-        _ => "unknown",
-    }
-}
-
 /// One selected test, ready to render in either `select` output format.
 struct SelectedTest {
     file: std::path::PathBuf,
@@ -508,6 +497,11 @@ struct SelectedTest {
     name: Vec<String>,
     runner: &'static str,
     lang: String,
+    /// The repo-relative build-module directory this test lives in, for the
+    /// runners whose commands must be scoped to one (`mvn -pl`, `gradle
+    /// :mod:test`). `None` for a single-module repo and for every
+    /// module-less language. See `runner::module_dir`.
+    module: Option<std::path::PathBuf>,
     /// Mirrors `Def::computed_name`: set when any segment of `name` was
     /// truncated because a later segment couldn't be statically resolved
     /// (e.g. a template-literal test title); consumers should widen their
@@ -558,19 +552,31 @@ fn cmd_select(from: String, to: Option<String>, format: Option<Format>) -> Resul
     let total_known = count_tests(&graph);
     let seed_count = seeds.len();
     let test_defs = selected_test_defs(&graph, &seeds, &config)?;
+    // Runner sniffing reads build files (`pom.xml`, `build.gradle`), so it
+    // must look at the user's real working tree: with `--to <rev>` the
+    // indexed root is a temp worktree that's already unwound by now, and
+    // the commands printed are meant to be run here regardless.
+    let cwd = std::env::current_dir().context("getting current directory")?;
     let tests: Vec<SelectedTest> = test_defs
         .into_iter()
         .map(|id| {
             let def = graph.def(id);
             let file = &graph.files[def.file.0 as usize];
+            let module = runner::module_dir(&file.path);
             SelectedTest {
                 file: file.path.clone(),
                 name: def
                     .test_id
                     .clone()
                     .unwrap_or_else(|| vec![def.name.clone()]),
-                runner: runner_for_lang(&file.lang),
+                runner: runner::runner_for(
+                    &file.lang,
+                    module.as_deref(),
+                    &cwd,
+                    config.java_runner.as_deref(),
+                ),
                 lang: file.lang.clone(),
+                module,
                 computed: def.computed_name,
             }
         })

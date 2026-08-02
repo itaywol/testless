@@ -1198,3 +1198,279 @@ fn module_init_edit_selects_all_transitive_importer_tests() {
         "expected exactly 3 selected tests, got {tests:?}"
     );
 }
+
+// --- Java -----------------------------------------------------------------
+//
+// Gradle single-module layout, three packages:
+// - `com.example.calc.Calc`: `add` (called by its own test and, across
+//   packages, by `Report.summarize`) plus an unrelated `triple`.
+// - `com.example.report.Report`: imports and calls `Calc`.
+// - `com.example.solo.SoloTest`: touches neither.
+//
+// `CalcTest` deliberately sits in `src/test/java/com/example/calc` — same
+// package as `Calc`, different directory — and references `Calc` with *no
+// import statement*, which is how essentially every Java unit test is
+// written. Only `Language::package_key` makes that edge exist.
+
+const J_SETTINGS: &str = "rootProject.name = 'app'\n";
+const J_BUILD: &str = "plugins { id 'java' }\ntest { useJUnitPlatform() }\n";
+
+const J_CALC: &str = "\
+package com.example.calc;
+
+public class Calc {
+    public int add(int a, int b) { return a + b; }
+    public int triple(int a) { return a * 3; }
+}
+";
+
+const J_CALC_BODY_EDITED: &str = "\
+package com.example.calc;
+
+public class Calc {
+    public int add(int a, int b) { return a + b + 1; }
+    public int triple(int a) { return a * 3; }
+}
+";
+
+const J_REPORT: &str = "\
+package com.example.report;
+
+import com.example.calc.Calc;
+
+public class Report {
+    private final Calc calc;
+    public Report(Calc calc) { this.calc = calc; }
+    public String summarize(int a, int b) { return \"sum=\" + calc.add(a, b); }
+}
+";
+
+const J_CALC_TEST: &str = "\
+package com.example.calc;
+
+import org.junit.jupiter.api.Test;
+
+class CalcTest {
+    @Test
+    void addsNegatives() {
+        new Calc().add(-1, -2);
+    }
+
+    @Test
+    void triples() {
+        new Calc().triple(2);
+    }
+}
+";
+
+const J_REPORT_TEST: &str = "\
+package com.example.report;
+
+import com.example.calc.Calc;
+import org.junit.jupiter.api.Test;
+
+class ReportTest {
+    @Test
+    void summarizes() {
+        new Report(new Calc()).summarize(1, 2);
+    }
+}
+";
+
+const J_SOLO_TEST: &str = "\
+package com.example.solo;
+
+import org.junit.jupiter.api.Test;
+
+class SoloTest {
+    @Test
+    void standsAlone() {
+        int x = 1 + 1;
+    }
+}
+";
+
+fn init_java_repo() -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    for dir in [
+        "src/main/java/com/example/calc",
+        "src/main/java/com/example/report",
+        "src/test/java/com/example/calc",
+        "src/test/java/com/example/report",
+        "src/test/java/com/example/solo",
+    ] {
+        std::fs::create_dir_all(root.join(dir)).unwrap();
+    }
+    std::fs::write(root.join("settings.gradle"), J_SETTINGS).unwrap();
+    std::fs::write(root.join("build.gradle"), J_BUILD).unwrap();
+    std::fs::write(
+        root.join("src/main/java/com/example/calc/Calc.java"),
+        J_CALC,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/main/java/com/example/report/Report.java"),
+        J_REPORT,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/test/java/com/example/calc/CalcTest.java"),
+        J_CALC_TEST,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/test/java/com/example/report/ReportTest.java"),
+        J_REPORT_TEST,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/test/java/com/example/solo/SoloTest.java"),
+        J_SOLO_TEST,
+    )
+    .unwrap();
+    git(root, &["init", "-b", "main"]);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-m", "initial"]);
+    tmp
+}
+
+fn selected_names(root: &std::path::Path) -> Vec<Vec<String>> {
+    let assert = Command::cargo_bin("testless")
+        .unwrap()
+        .arg("select")
+        .current_dir(root)
+        .assert()
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(out.trim()).unwrap_or_else(|e| {
+        panic!("expected JSON stdout, got {out:?} ({e})");
+    });
+    assert_eq!(json["mode"], "selection", "unexpected run-all: {json}");
+    json["tests"]
+        .as_array()
+        .expect("tests array")
+        .iter()
+        .map(|t| {
+            t["name"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s.as_str().unwrap().to_string())
+                .collect()
+        })
+        .collect()
+}
+
+/// Editing `Calc.add`'s body selects its own same-package test and the
+/// cross-package `ReportTest`, and leaves the unrelated tests alone.
+#[test]
+fn java_add_body_edit_selects_add_and_report_tests_excludes_others() {
+    let tmp = init_java_repo();
+    let root = tmp.path();
+    std::fs::write(
+        root.join("src/main/java/com/example/calc/Calc.java"),
+        J_CALC_BODY_EDITED,
+    )
+    .unwrap();
+
+    let names = selected_names(root);
+
+    assert!(
+        names.contains(&vec![
+            "com.example.calc.CalcTest".to_string(),
+            "addsNegatives".to_string()
+        ]),
+        "expected CalcTest.addsNegatives (same package, no import) in {names:?}"
+    );
+    assert!(
+        names.contains(&vec![
+            "com.example.report.ReportTest".to_string(),
+            "summarizes".to_string()
+        ]),
+        "expected ReportTest.summarizes (cross-package via import) in {names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|n| n.last().map(|s| s.as_str()) == Some("standsAlone")),
+        "SoloTest.standsAlone must NOT be selected, got {names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|n| n.last().map(|s| s.as_str()) == Some("triples")),
+        "CalcTest.triples must NOT be selected, got {names:?}"
+    );
+    assert_eq!(
+        names.len(),
+        2,
+        "expected exactly 2 selected tests, got {names:?}"
+    );
+}
+
+/// `--format args` prints Gradle command lines, scoped by class and method,
+/// because a `build.gradle` sits at the repo root.
+#[test]
+fn java_format_args_emits_gradle_lines() {
+    let tmp = init_java_repo();
+    let root = tmp.path();
+    std::fs::write(
+        root.join("src/main/java/com/example/calc/Calc.java"),
+        J_CALC_BODY_EDITED,
+    )
+    .unwrap();
+
+    let assert = Command::cargo_bin("testless")
+        .unwrap()
+        .args(["select", "--format", "args"])
+        .current_dir(root)
+        .assert()
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let lines: Vec<&str> = out.lines().collect();
+
+    assert!(
+        lines.contains(&"gradle test --tests com.example.calc.CalcTest.addsNegatives"),
+        "got {lines:?}"
+    );
+    assert!(
+        lines.contains(&"gradle test --tests com.example.report.ReportTest.summarizes"),
+        "got {lines:?}"
+    );
+    assert_eq!(lines.len(), 2, "got {lines:?}");
+}
+
+/// A `pom.xml` instead of a `build.gradle` flips the same selection to
+/// Maven command lines: the runner comes from the build file, not from the
+/// language.
+#[test]
+fn java_maven_repo_emits_mvn_lines() {
+    let tmp = init_java_repo();
+    let root = tmp.path();
+    std::fs::remove_file(root.join("build.gradle")).unwrap();
+    std::fs::write(root.join("pom.xml"), "<project/>\n").unwrap();
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-m", "switch to maven"]);
+    std::fs::write(
+        root.join("src/main/java/com/example/calc/Calc.java"),
+        J_CALC_BODY_EDITED,
+    )
+    .unwrap();
+
+    let assert = Command::cargo_bin("testless")
+        .unwrap()
+        .args(["select", "--format", "args"])
+        .current_dir(root)
+        .assert()
+        .success();
+    let out = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let lines: Vec<&str> = out.lines().collect();
+
+    assert!(
+        lines.contains(
+            &"mvn test -Dtest='com.example.calc.CalcTest#addsNegatives' -DfailIfNoTests=false"
+        ),
+        "got {lines:?}"
+    );
+}

@@ -16,9 +16,10 @@
 //!    instead: its old content is diffed directly against its new-path
 //!    content, so rename semantics are unaffected.)
 //!
-//!    A deleted **Go** file is a special case (Go imports name package
-//!    *directories*, never file stems, and same-package sibling files
-//!    reference each other via nothing at all): see [`seed_go_deletion`].
+//!    A deleted file in a **package-scoped** language (Go, Java) is a
+//!    special case (their imports name package *directories*, never file
+//!    stems, and same-package sibling files reference each other via
+//!    nothing at all): see [`seed_package_deletion`].
 //!
 //!    A deleted file that *is* indexed but whose name yields no usable scan
 //!    needle (see [`stem_needles`]) can't be soundly narrowed by the stem
@@ -170,8 +171,9 @@ enum PerFile {
     /// or not). Batched up for a single pass over every indexed file's raw
     /// imports.
     ScanImporters(PathBuf),
-    /// A deleted Go file: seeds found directly (its surviving package
-    /// siblings' `ModuleInit`, see [`seed_go_deletion`]) plus one or more
+    /// A deleted package-scoped (Go, Java) file: seeds found directly (its
+    /// surviving package siblings' `ModuleInit`, see
+    /// [`seed_package_deletion`]) plus one or more
     /// extra paths for the raw-import stem scan (the deleted file's own
     /// path, and its package directory).
     SeedsAndScan(Vec<Seed>, Vec<PathBuf>),
@@ -190,8 +192,8 @@ fn classify_one(
         // importer's now-dangling reference still seeds that importer's
         // `ModuleInit` (see rule 2's doc comment above).
         if let Some(lang) = registry.for_path(&c.path) {
-            if lang.id() == "go" {
-                return seed_go_deletion(new_graph, &c.path);
+            if lang.package_key(&c.path).is_some() {
+                return seed_package_deletion(new_graph, lang, &c.path);
             }
             if stem_needles(&c.path).is_empty() {
                 // An indexed file whose name is too short to yield any
@@ -334,8 +336,9 @@ fn stem_needles(path: &Path) -> Vec<String> {
 /// re-parsing) for a reference to any of `changed_paths` (substring match
 /// against each path's [`stem_needles`]). Each match seeds that importing
 /// file's `ModuleInit`. `changed_paths` may be files with no registered
-/// `Language`, deleted files (indexed or not), or (for a deleted Go file,
-/// see [`seed_go_deletion`]) a package directory path — either way there's
+/// `Language`, deleted files (indexed or not), or (for a deleted
+/// package-scoped file, see [`seed_package_deletion`]) a package directory
+/// path — either way there's
 /// no def-level diff to run, so this stem scan is the only way to find
 /// who's affected.
 fn scan_importers(
@@ -367,17 +370,21 @@ fn scan_importers(
     seeds
 }
 
-/// A deleted **Go** source file: Go imports name package *directories*
-/// (e.g. `example.com/m/pkg`), never a file's stem, and files within the
-/// same package don't import each other at all (no statement references a
-/// same-package sibling by name). So neither half of the ordinary deleted-
-/// file handling (rule 2) can find the right seeds on its own:
+/// A deleted source file in a **package-scoped** language (see
+/// [`crate::language::Language::package_scoped`]; Go and Java today):
+/// imports name package *directories* (Go's `example.com/m/pkg`, Java's
+/// `import a.b.C` resolving under a source root), never a file's own stem,
+/// and files within the same package don't import each other at all (no
+/// statement references a same-package sibling by name). So neither half of
+/// the ordinary deleted-file handling (rule 2) can find the right seeds on
+/// its own:
 ///
 /// - The basename/stem scan (`scan_importers` via `stem_needles`) never
 ///   matches a same-package sibling, since nothing imports it by name.
 /// - It also can't find *other* packages' importers unless it's given the
 ///   package directory's own name as a needle (an import of
-///   `example.com/m/pkg` contains `pkg`, the directory's basename).
+///   `example.com/m/pkg` contains `pkg`, the directory's basename; a Java
+///   `import a.b.C` contains both `b` and `C`).
 ///
 /// Fix: (a) directly seed the `ModuleInit` of every surviving `new_graph`
 /// file in the same directory as `deleted_path` (its package siblings,
@@ -387,10 +394,14 @@ fn scan_importers(
 ///
 /// If neither the deleted file's own name nor its package directory's name
 /// yields a usable [`stem_needles`] candidate, this can't soundly rule out
-/// an importer in another package — same as the non-Go short-stem case,
-/// escalates to `RunAll` rather than silently under-selecting.
-fn seed_go_deletion(new_graph: &Graph, deleted_path: &Path) -> Result<PerFile, String> {
-    let seeds = sibling_module_inits(new_graph, deleted_path);
+/// an importer in another package — same as the file-scoped short-stem
+/// case, escalates to `RunAll` rather than silently under-selecting.
+fn seed_package_deletion(
+    new_graph: &Graph,
+    lang: &dyn Language,
+    deleted_path: &Path,
+) -> Result<PerFile, String> {
+    let seeds = sibling_module_inits(new_graph, lang, deleted_path);
 
     let mut scan_paths = vec![deleted_path.to_path_buf()];
     if let Some(dir) = deleted_path.parent() {
@@ -402,7 +413,7 @@ fn seed_go_deletion(new_graph: &Graph, deleted_path: &Path) -> Result<PerFile, S
     let has_needle = scan_paths.iter().any(|p| !stem_needles(p).is_empty());
     if !has_needle {
         return Err(format!(
-            "deleted go file {} (and its package directory) has no usable stem (<{MIN_STEM_LEN} chars) to find importers",
+            "deleted package-scoped file {} (and its package directory) has no usable stem (<{MIN_STEM_LEN} chars) to find importers",
             deleted_path.display()
         ));
     }
@@ -410,14 +421,18 @@ fn seed_go_deletion(new_graph: &Graph, deleted_path: &Path) -> Result<PerFile, S
     Ok(PerFile::SeedsAndScan(seeds, scan_paths))
 }
 
-/// Every `new_graph` file sharing `deleted_path`'s parent directory (i.e.
-/// its Go package siblings, including test files), paired with its
+/// Every `new_graph` file sharing `deleted_path`'s package (per
+/// [`Language::package_key`]; its Go directory siblings, or its Java
+/// package across both source roots — test files included), paired with its
 /// `ModuleInit` def where present, as `SeedKind::ModuleInit` seeds.
-fn sibling_module_inits(new_graph: &Graph, deleted_path: &Path) -> Vec<Seed> {
-    let dir = deleted_path.parent();
+///
+/// Only files of the deleted file's own language are considered: keys are
+/// defined per-language and comparing them across languages is meaningless.
+fn sibling_module_inits(new_graph: &Graph, lang: &dyn Language, deleted_path: &Path) -> Vec<Seed> {
+    let key = lang.package_key(deleted_path);
     let mut seeds = Vec::new();
     for (i, f) in new_graph.files.iter().enumerate() {
-        if f.path.parent() == dir {
+        if f.lang == lang.id() && lang.package_key(&f.path) == key {
             let file_id = FileId(i as u32);
             if let Some(m) = new_graph.module_init(file_id) {
                 seeds.push(Seed {

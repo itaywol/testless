@@ -6,6 +6,7 @@
     "crates/lang-ts": { "package-name": "testless-lang-ts", "component": "testless-lang-ts" },
     "crates/lang-go": { "package-name": "testless-lang-go", "component": "testless-lang-go" },
     "crates/lang-rust": { "package-name": "testless-lang-rust", "component": "testless-lang-rust" },
+    "crates/lang-java": { "package-name": "testless-lang-java", "component": "testless-lang-java" },
     "crates/cli": { "package-name": "testless", "component": "testless" }
   },
   "plugins": [
@@ -13,7 +14,7 @@
     {
       "type": "linked-versions",
       "groupName": "testless",
-      "components": ["testless-core", "testless-lang-ts", "testless-lang-go", "testless-lang-rust", "testless"]
+      "components": ["testless-core", "testless-lang-ts", "testless-lang-go", "testless-lang-rust", "testless-lang-java", "testless"]
     }
   ]
 }
