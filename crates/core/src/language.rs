@@ -61,6 +61,37 @@ pub trait Language: Send + Sync {
     fn extract(&self, src: &str, tree: &tree_sitter::Tree) -> Extraction;
     /// raw import specifier -> repo-relative file path, None if external/unresolvable
     fn resolve_import(&self, from_file: &Path, raw: &str, repo_root: &Path) -> Option<PathBuf>;
+
+    /// The *package* `file` belongs to, for languages whose unit of
+    /// visibility is the package rather than the file: two files sharing a
+    /// key see each other's definitions with no import statement at all.
+    /// `None` (the default) means file-scoped — nothing is visible without
+    /// an explicit import (TS, Rust).
+    ///
+    /// Two things key off this, both of which would otherwise under-select:
+    ///
+    /// - `indexer`'s pass 3 extends a file's resolution scope to every file
+    ///   sharing its key, so a cross-file same-package call resolves
+    ///   instead of degrading to `Unknown`.
+    /// - `classify`'s deleted-file rule seeds the surviving package
+    ///   siblings' `ModuleInit` directly, since nothing ever imported the
+    ///   deleted file by its own stem.
+    ///
+    /// The key is *not* required to be the file's directory. Go's is (a Go
+    /// package is a directory), but Java's deliberately isn't: Maven and
+    /// Gradle split one package across parallel source roots, so
+    /// `src/main/java/com/foo/Calc.java` and
+    /// `src/test/java/com/foo/CalcTest.java` are the same package
+    /// (`com/foo`) in two different directories, and `CalcTest` references
+    /// `Calc` with no import at all. Keying on the directory would miss
+    /// exactly the edge that matters most — the one from a class to its own
+    /// unit test.
+    ///
+    /// Keys are only ever compared between files of the same language, so
+    /// they don't need to be globally unique across languages.
+    fn package_key(&self, _file: &Path) -> Option<PathBuf> {
+        None
+    }
 }
 
 pub struct Registry {

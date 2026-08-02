@@ -5,6 +5,7 @@
 //! ```toml
 //! always-run = ["tests/smoke/**", "**/*.e2e.test.ts"]
 //! ignore = ["**/generated/**", "*.pb.go"]
+//! java-runner = "gradle"
 //! ```
 //!
 //! - `ignore`: discovery-level. Matched (via `globset`) against repo-relative
@@ -15,6 +16,9 @@
 //!   def whose *file* matches one of these globs is added to the selection
 //!   regardless of whether the walk reached it; see
 //!   [`always_run_matches`].
+//! - `java-runner`: rendering-level, and Java-only. `"maven"` or
+//!   `"gradle"`; overrides the build-file sniffing `--format args` does to
+//!   decide which command shape to print (see the CLI's `runner` module).
 //!
 //! A missing `testless.toml` is not an error: [`Config::load`] returns
 //! [`Config::default`] (both lists empty, i.e. a no-op). A `testless.toml`
@@ -41,6 +45,15 @@ pub struct Config {
     pub always_run: Vec<String>,
     #[serde(default)]
     pub ignore: Vec<String>,
+    /// `"maven"` or `"gradle"`: forces which build tool `--format args`
+    /// renders Java test commands for, instead of sniffing for a `pom.xml`
+    /// / `build.gradle` next to the test's module. Unset (the default)
+    /// means sniff. Deliberately *not* validated at parse time: an
+    /// unrecognized value degrades that runner to `"unknown"` (no command
+    /// printed) rather than failing the whole run, matching how an
+    /// unregistered language behaves.
+    #[serde(default)]
+    pub java_runner: Option<String>,
 }
 
 impl Config {
@@ -209,7 +222,7 @@ mod tests {
 
         let config = Config {
             always_run: vec!["tests/smoke/**".to_string()],
-            ignore: vec![],
+            ..Config::default()
         };
 
         let matches = always_run_matches(&g, &config).unwrap();

@@ -47,7 +47,7 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
-          for c in testless-core testless-lang-ts testless-lang-go testless-lang-rust testless; do
+          for c in testless-core testless-lang-ts testless-lang-go testless-lang-rust testless-lang-java testless; do
             set +e
             out=$(cargo publish -p "$c" --no-verify 2>&1)
             status=$?

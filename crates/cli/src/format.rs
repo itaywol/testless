@@ -1,7 +1,7 @@
 //! `--format args`: render selected tests as ready-to-run test-runner
-//! command lines (vitest / `go test` / `cargo test`). Pure string
-//! generation: this module never spawns a process, it only builds the
-//! strings a human or CI job would paste into a shell.
+//! command lines (vitest / `go test` / `cargo test` / `mvn` / `gradle`).
+//! Pure string generation: this module never spawns a process, it only
+//! builds the strings a human or CI job would paste into a shell.
 //!
 //! One line per selected test (v1 keeps it simple: no multi-test `-t`
 //! grouping), deduplicated (a `computed` entry drops its exactness flag,
@@ -107,10 +107,81 @@ fn cargo_line(t: &SelectedTest) -> String {
     }
 }
 
+/// Split a Java `test_id` chain into its JVM class name and (when the
+/// chain names one) its method. The chain is `[fqcn, nested…, method]`:
+/// `["com.foo.OuterTest", "Inner", "adds"]` yields
+/// `("com.foo.OuterTest$Inner", Some("adds"))`, matching how the JVM names
+/// a JUnit 5 `@Nested` class.
+///
+/// A single-segment chain (`["com.foo.BarTest"]`, a class-level TestNG
+/// `@Test`) has no method to filter on, so the whole class runs.
+fn java_class_and_method(name: &[String]) -> (String, Option<&str>) {
+    match name.split_last() {
+        None => (String::new(), None),
+        Some((_, [])) => (name.join("$"), None),
+        Some((method, classes)) => (classes.join("$"), Some(method.as_str())),
+    }
+}
+
+/// `mvn test -pl <module> -Dtest='com.foo.BarTest#adds' -DfailIfNoTests=false`.
+///
+/// `-pl` is emitted only for a test inside a build module below the repo
+/// root; a single-module repo gets the plain reactor. `-DfailIfNoTests=false`
+/// is not optional: without it Surefire *fails* every module in a
+/// multi-module reactor whose tests don't match `-Dtest`, which is every
+/// module but one for a narrowed selection.
+///
+/// `computed` (a `@ParameterizedTest` / `@TestFactory`, whose per-invocation
+/// display names aren't statically knowable) drops the `#method` filter and
+/// widens to the whole class rather than printing a pattern that would
+/// under-select.
+fn maven_line(t: &SelectedTest) -> String {
+    let (class, method) = java_class_and_method(&t.name);
+    let selector = match method {
+        Some(m) if !t.computed => format!("{class}#{m}"),
+        _ => class,
+    };
+    let scope = match &t.module {
+        Some(m) => format!(" -pl {}", sh_quote(&m.display().to_string())),
+        None => String::new(),
+    };
+    format!(
+        "mvn test{scope} -Dtest={} -DfailIfNoTests=false",
+        sh_quote(&selector)
+    )
+}
+
+/// `gradle :services:billing:test --tests 'com.foo.BarTest.adds'`.
+///
+/// The task path is scoped to the test's own build module, so sibling
+/// projects in a multi-project build aren't asked to match a filter no test
+/// of theirs can satisfy (Gradle errors out on that, rather than skipping).
+/// A repo-root module gets the bare `test` task.
+///
+/// `computed` widens to the whole class, same rationale as [`maven_line`].
+fn gradle_line(t: &SelectedTest) -> String {
+    let (class, method) = java_class_and_method(&t.name);
+    let pattern = match method {
+        Some(m) if !t.computed => format!("{class}.{m}"),
+        _ => class,
+    };
+    let task = match &t.module {
+        Some(m) => format!(
+            ":{}:test",
+            m.components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(":")
+        ),
+        None => "test".to_string(),
+    };
+    format!("gradle {} --tests {}", sh_quote(&task), sh_quote(&pattern))
+}
+
 /// Render `tests` as one runner-consumable command line each, deduplicated
 /// and sorted for a deterministic, script-friendly stdout stream. A
 /// `runner` this module doesn't recognize (only `"unknown"` today, see
-/// `runner_for_lang`) is silently skipped: there's no sensible command to
+/// `crate::runner::runner_for`) is silently skipped: there's no sensible command to
 /// print for it, and `select`'s `json`/`text` formats already surface the
 /// `"unknown"` label for inspection.
 pub fn command_lines(tests: &[SelectedTest]) -> Vec<String> {
@@ -120,6 +191,8 @@ pub fn command_lines(tests: &[SelectedTest]) -> Vec<String> {
             "vitest" => Some(vitest_line(t)),
             "gotest" => Some(gotest_line(t)),
             "cargo" => Some(cargo_line(t)),
+            "maven" => Some(maven_line(t)),
+            "gradle" => Some(gradle_line(t)),
             _ => None,
         })
         .collect();
@@ -139,6 +212,7 @@ mod tests {
             name: name.iter().map(|s| s.to_string()).collect(),
             runner,
             lang: "irrelevant".to_string(),
+            module: crate::runner::module_dir(std::path::Path::new(file)),
             computed,
         }
     }
@@ -228,6 +302,125 @@ mod tests {
     fn cargo_computed_drops_exact() {
         let t = test("src/lib.rs", &["math", "add_works"], "cargo", true);
         assert_eq!(command_lines(&[t]), vec!["cargo test math::add_works"]);
+    }
+
+    #[test]
+    fn maven_single_module() {
+        let t = test(
+            "src/test/java/com/foo/BarTest.java",
+            &["com.foo.BarTest", "addsNegatives"],
+            "maven",
+            false,
+        );
+        assert_eq!(
+            command_lines(&[t]),
+            vec!["mvn test -Dtest='com.foo.BarTest#addsNegatives' -DfailIfNoTests=false"]
+        );
+    }
+
+    #[test]
+    fn maven_multi_module_scopes_with_pl() {
+        let t = test(
+            "services/billing/src/test/java/com/foo/BarTest.java",
+            &["com.foo.BarTest", "addsNegatives"],
+            "maven",
+            false,
+        );
+        assert_eq!(
+            command_lines(&[t]),
+            vec![
+                "mvn test -pl services/billing -Dtest='com.foo.BarTest#addsNegatives' -DfailIfNoTests=false"
+            ]
+        );
+    }
+
+    // A JUnit 5 `@Nested` class is `Outer$Inner` on the JVM, so the chain's
+    // middle segments join with `$`, not `.`.
+    #[test]
+    fn maven_nested_class_uses_dollar() {
+        let t = test(
+            "src/test/java/com/foo/OuterTest.java",
+            &["com.foo.OuterTest", "WhenEmpty", "throws"],
+            "maven",
+            false,
+        );
+        assert_eq!(
+            command_lines(&[t]),
+            vec!["mvn test -Dtest='com.foo.OuterTest$WhenEmpty#throws' -DfailIfNoTests=false"]
+        );
+    }
+
+    #[test]
+    fn maven_computed_widens_to_class() {
+        let t = test(
+            "src/test/java/com/foo/BarTest.java",
+            &["com.foo.BarTest", "addsNegatives"],
+            "maven",
+            true,
+        );
+        assert_eq!(
+            command_lines(&[t]),
+            vec!["mvn test -Dtest=com.foo.BarTest -DfailIfNoTests=false"]
+        );
+    }
+
+    #[test]
+    fn gradle_single_module() {
+        let t = test(
+            "src/test/java/com/foo/BarTest.java",
+            &["com.foo.BarTest", "addsNegatives"],
+            "gradle",
+            false,
+        );
+        assert_eq!(
+            command_lines(&[t]),
+            vec!["gradle test --tests com.foo.BarTest.addsNegatives"]
+        );
+    }
+
+    #[test]
+    fn gradle_multi_module_scopes_task_path() {
+        let t = test(
+            "services/billing/src/test/java/com/foo/BarTest.java",
+            &["com.foo.BarTest", "addsNegatives"],
+            "gradle",
+            false,
+        );
+        assert_eq!(
+            command_lines(&[t]),
+            vec!["gradle :services:billing:test --tests com.foo.BarTest.addsNegatives"]
+        );
+    }
+
+    #[test]
+    fn gradle_computed_widens_to_class() {
+        let t = test(
+            "src/test/java/com/foo/BarTest.java",
+            &["com.foo.BarTest", "addsNegatives"],
+            "gradle",
+            true,
+        );
+        assert_eq!(
+            command_lines(&[t]),
+            vec!["gradle test --tests com.foo.BarTest"]
+        );
+    }
+
+    /// A class-level chain (TestNG's class-scoped `@Test`) has no method to
+    /// filter on and must run the whole class rather than treating the
+    /// class name as a method name.
+    #[test]
+    fn java_class_only_chain_has_no_method_filter() {
+        let t = test(
+            "src/test/java/com/foo/BarTest.java",
+            &["com.foo.BarTest"],
+            "gradle",
+            false,
+        );
+        assert_eq!(
+            command_lines(&[t]),
+            vec!["gradle test --tests com.foo.BarTest"]
+        );
     }
 
     // Test names are free-form strings: quotes, dollar signs, backticks,
