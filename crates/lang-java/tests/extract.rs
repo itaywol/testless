@@ -229,3 +229,75 @@ fn package_key_falls_back_to_directory_outside_source_roots() {
         Some(PathBuf::from("scripts"))
     );
 }
+
+// --- containment rule (discovered on spring-boot / gson) -----------------
+
+fn parent_name(ex: &testless_core::Extraction, name: &str) -> Option<String> {
+    let d = ex.defs.iter().find(|d| d.name == name)?;
+    d.parent.map(|p| ex.defs[p].name.clone())
+}
+
+/// A framework-annotated member is invoked by a container, never by name, so
+/// it must hang off its class — otherwise a change to it reaches no test at
+/// all. Regression for a real spring-boot under-select: editing a `@Bean`
+/// body selected 0 of 17,720 tests.
+#[test]
+fn framework_annotated_members_parent_to_their_class() {
+    let src = r#"package com.foo;
+class Config {
+    @Bean
+    JsonFactory jsonFactory() { return new JsonFactory(); }
+
+    @Autowired
+    private Helper helper;
+}
+"#;
+    let ex = extract(src);
+    assert_eq!(
+        parent_name(&ex, "Config.jsonFactory").as_deref(),
+        Some("Config")
+    );
+    assert_eq!(parent_name(&ex, "Config#helper").as_deref(), Some("Config"));
+}
+
+/// `@Override` is on a huge share of Java methods and means nothing to any
+/// runtime, so it must NOT imply container invocation. Regression for a real
+/// gson over-select: counting it took a leaf edit from 6 to 1501 of 1534.
+#[test]
+fn inert_annotations_do_not_imply_containment() {
+    let src = r#"package com.foo;
+class Impl {
+    @Override
+    public String toString() { return "x"; }
+
+    @SuppressWarnings("unchecked")
+    void unchecked() {}
+
+    void plain() {}
+}
+"#;
+    let ex = extract(src);
+    for m in ["Impl.toString", "Impl.unchecked", "Impl.plain"] {
+        assert_eq!(parent_name(&ex, m), None, "{m} should not parent to class");
+    }
+}
+
+/// Fields become defs, named `Class#field` rather than `Class.field`: the
+/// indexer keys on the segment after the last `.`, so the dotted form would
+/// be indexed as bare `field` and two classes' same-named fields would
+/// cross-link.
+#[test]
+fn fields_become_class_scoped_defs() {
+    let src = r#"package com.foo;
+class T {
+    private final Runner contextRunner = new Runner();
+    private int a = 1, b = 2;
+}
+"#;
+    let ex = extract(src);
+    let names: Vec<&str> = ex.defs.iter().map(|d| d.name.as_str()).collect();
+    assert!(names.contains(&"T#contextRunner"), "{names:?}");
+    // One def per declarator, not per statement.
+    assert!(names.contains(&"T#a"), "{names:?}");
+    assert!(names.contains(&"T#b"), "{names:?}");
+}

@@ -20,7 +20,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use testless_core::fingerprint::{module_init_fingerprint, split_fingerprint};
 use testless_core::{DefKind, ExtractedDef, ExtractedRef, Extraction, ImportRef, Language};
@@ -43,6 +43,30 @@ const TEST_ANNOTATIONS: &[&str] = &[
     "RepeatedTest",
     "TestFactory",
     "TestTemplate",
+];
+
+/// Annotations that say something to the *compiler* and nothing to any
+/// runtime container, so they must not be read as "this member is invoked
+/// reflectively" (see the containment rule in `handle_type_declaration`).
+///
+/// `@Override` is the one that matters: it sits on a large fraction of all
+/// Java methods, and counting it would parent nearly every method to its
+/// class, which is precisely the blanket widening the annotation rule
+/// exists to avoid. Measured on google/gson, treating `@Override` as
+/// reflective took a leaf-utility edit from 6 selected tests to 1501.
+/// Nullability annotations are here for the same reason: ubiquitous,
+/// purely static.
+const INERT_ANNOTATIONS: &[&str] = &[
+    "Override",
+    "SuppressWarnings",
+    "Deprecated",
+    "SafeVarargs",
+    "FunctionalInterface",
+    "Nullable",
+    "NonNull",
+    "Nonnull",
+    "NotNull",
+    "CheckForNull",
 ];
 
 /// Node kinds that declare a type and therefore become a `DefKind::Class`.
@@ -77,10 +101,10 @@ const MAX_ROOT_SCAN_DEPTH: usize = 8;
 
 #[derive(Default)]
 pub struct JavaLanguage {
-    /// repo root -> its `*/src/*/java` source roots, repo-relative. Built
-    /// once per repo and reused: `resolve_import` runs per import per file,
-    /// so rescanning the tree each time would be quadratic.
-    roots: Mutex<HashMap<PathBuf, Vec<PathBuf>>>,
+    /// repo root -> its fully-qualified-name index. Built once per repo and
+    /// reused; see [`JavaLanguage::repo_index`] for why this can't be a
+    /// per-import filesystem probe.
+    index: Mutex<HashMap<PathBuf, Arc<RepoIndex>>>,
 }
 
 impl Language for JavaLanguage {
@@ -158,6 +182,10 @@ impl Language for JavaLanguage {
         // a parameter, an annotation) and so must never be scanned as reads.
         let mut scope_of: HashMap<usize, usize> = HashMap::new();
         let mut def_name_ids: HashSet<usize> = HashSet::new();
+        // (owning class, field name) for every field this file declares, so
+        // the refs pass can resolve a bare field name inside its own class
+        // instead of against every same-named field in the package.
+        let mut field_owners: HashSet<(String, String)> = HashSet::new();
 
         let mut cursor = root.walk();
         for child in root.children(&mut cursor) {
@@ -168,6 +196,7 @@ impl Language for JavaLanguage {
                     &mut defs,
                     &mut scope_of,
                     &mut def_name_ids,
+                    &mut field_owners,
                     None,
                     &[],
                     package.as_deref(),
@@ -180,11 +209,14 @@ impl Language for JavaLanguage {
 
         let known_names = build_known_names(&defs, &imports);
 
+        let def_class = def_classes(&defs);
         let ctx = RefCtx {
             src: src_bytes,
             scope_of: &scope_of,
             def_name_ids: &def_name_ids,
             known_names: &known_names,
+            def_class: &def_class,
+            field_owners: &field_owners,
         };
         let mut calls = Vec::new();
         let mut reads = Vec::new();
@@ -199,21 +231,19 @@ impl Language for JavaLanguage {
     }
 
     /// A dotted Java import (`com.foo.core.Calc`, `com.foo.util.*`,
-    /// `static org.junit.jupiter.api.Assertions.assertEquals`) resolved
-    /// against every source root in the repo.
+    /// `static org.junit.jupiter.api.Assertions.assertEquals`) looked up in
+    /// the repo's fully-qualified-name index.
     ///
-    /// Three shapes are probed per root, in order:
+    /// Three shapes are tried, in order:
     ///
-    /// 1. `<root>/com/foo/core/Calc.java` — an ordinary single-type import,
+    /// 1. `com/foo/core/Calc` as a *type* — an ordinary single-type import,
     ///    the precise and overwhelmingly common case.
-    /// 2. `<root>/com/foo/util` as a *directory* — a wildcard import, which
-    ///    the indexer fans out to every indexed file under it (the same
-    ///    dir-fanout Go package imports use).
-    /// 3. `<root>/org/junit/jupiter/api/Assertions.java` — a static member
-    ///    import, where the last segment names a member rather than a type.
+    /// 2. `com/foo/util` as a *package* — a wildcard import, which the
+    ///    indexer fans out to every indexed file under the directory (the
+    ///    same dir-fanout Go package imports use).
+    /// 3. `org/junit/jupiter/api/Assertions` — a static member import,
+    ///    where the last segment names a member rather than a type.
     ///
-    /// The importing file's *own* source root is tried first, so a
-    /// same-module import doesn't pay for a probe of every sibling module.
     /// Anything that matches nothing (`java.util.List`, a third-party jar)
     /// yields `None`, exactly as an unresolvable import should.
     fn resolve_import(&self, from_file: &Path, raw: &str, repo_root: &Path) -> Option<PathBuf> {
@@ -224,77 +254,149 @@ impl Language for JavaLanguage {
             return None;
         }
         let as_path: PathBuf = dotted.split('.').collect();
+        let index = self.repo_index(repo_root);
 
-        for root in self.probe_order(from_file, repo_root) {
-            if wildcard {
-                if repo_root.join(root.join(&as_path)).is_dir() {
-                    return Some(root.join(&as_path));
-                }
-                continue;
-            }
-            let file = root.join(as_path.with_extension("java"));
-            if repo_root.join(&file).is_file() {
-                return Some(file);
-            }
-            let dir = root.join(&as_path);
-            if repo_root.join(&dir).is_dir() {
-                return Some(dir);
-            }
-            if let Some(parent) = as_path.parent() {
-                let owner = root.join(parent.with_extension("java"));
-                if repo_root.join(&owner).is_file() {
-                    return Some(owner);
-                }
-            }
+        if wildcard {
+            return index
+                .packages
+                .get(&as_path)
+                .and_then(|c| pick(c, from_file));
         }
-        None
+        if let Some(hit) = index.classes.get(&as_path).and_then(|c| pick(c, from_file)) {
+            return Some(hit);
+        }
+        if let Some(hit) = index
+            .packages
+            .get(&as_path)
+            .and_then(|c| pick(c, from_file))
+        {
+            return Some(hit);
+        }
+        as_path
+            .parent()
+            .and_then(|owner| index.classes.get(owner))
+            .and_then(|c| pick(c, from_file))
     }
 }
 
 impl JavaLanguage {
-    /// The source roots to probe for an import from `from_file`, best
-    /// candidate first: `src/main/java` roots ahead of everything else,
-    /// then the importing file's own root, then the rest.
+    /// The repo's fully-qualified-name index, built once and reused.
     ///
-    /// Ordering only decides anything when *two* roots hold the same
-    /// package, and then production code is the right answer: an
-    /// `import com.foo.thing.*` from another package means the classes
-    /// `com/foo/thing` publishes, not a same-named test-only package.
+    /// This has to be an index, not a probe loop. `resolve_import` runs
+    /// once per import per file; spring-boot is ~8.7k Java files across
+    /// ~460 Gradle modules, so ~900 source roots. Stat-probing every root
+    /// for every import is O(imports x roots) filesystem syscalls — on that
+    /// repo, hundreds of millions, which never finishes. One walk up front
+    /// turns each import into a hashmap lookup.
     ///
-    /// ponytail: a wildcard import resolves to one directory, so a package
-    /// genuinely split across `src/main/java` *and* `src/test/java` only
-    /// contributes its main half. Widening that needs `resolve_import` to
-    /// return several paths; until a real repo shows the split mattering,
-    /// main-first covers it.
-    fn probe_order(&self, from_file: &Path, repo_root: &Path) -> Vec<PathBuf> {
-        let own = source_root_of(from_file);
-        let mut candidates: Vec<PathBuf> = own.iter().cloned().collect();
-        for root in self.source_roots(repo_root) {
-            if !candidates.contains(&root) {
-                candidates.push(root);
-            }
-        }
-        // Stable, so the own-root-first ordering survives within each group.
-        candidates.sort_by_key(|r| !r.ends_with("main/java"));
-        candidates
-    }
-
-    /// Every `*/src/*/java` directory in `repo_root`, repo-relative, found
-    /// once and cached. A poisoned lock (another thread panicked mid-scan)
-    /// degrades to an uncached rescan rather than propagating the panic:
-    /// import resolution is best-effort infrastructure, not a place to take
-    /// the whole index down.
-    fn source_roots(&self, repo_root: &Path) -> Vec<PathBuf> {
-        if let Ok(cache) = self.roots.lock() {
+    /// A poisoned lock (another thread panicked mid-scan) degrades to an
+    /// uncached rebuild rather than propagating the panic: import
+    /// resolution is best-effort infrastructure, not a place to take the
+    /// whole index down.
+    fn repo_index(&self, repo_root: &Path) -> Arc<RepoIndex> {
+        if let Ok(cache) = self.index.lock() {
             if let Some(hit) = cache.get(repo_root) {
-                return hit.clone();
+                return Arc::clone(hit);
             }
         }
-        let found = scan_source_roots(repo_root);
-        if let Ok(mut cache) = self.roots.lock() {
-            cache.insert(repo_root.to_path_buf(), found.clone());
+        let built = Arc::new(build_repo_index(repo_root));
+        if let Ok(mut cache) = self.index.lock() {
+            cache.insert(repo_root.to_path_buf(), Arc::clone(&built));
         }
-        found
+        built
+    }
+}
+
+/// Every type and package the repo declares, keyed by fully-qualified name
+/// as a path (`com/foo/Calc`, `com/foo`). Values are repo-relative paths,
+/// and there may be more than one: the same FQN can legitimately appear in
+/// a `main` and a `test` source root, or in two unrelated modules.
+#[derive(Default)]
+struct RepoIndex {
+    /// `com/foo/Calc` -> the `.java` files declaring it.
+    classes: HashMap<PathBuf, Vec<PathBuf>>,
+    /// `com/foo` -> the package directories holding it.
+    packages: HashMap<PathBuf, Vec<PathBuf>>,
+}
+
+/// Choose among several files/directories declaring the same FQN: prefer
+/// the importing file's own module (a multi-module repo can define the same
+/// class name twice, and the local one is what the compiler would bind),
+/// then a `src/main/java` root over a test root, then whatever came first.
+fn pick(candidates: &[PathBuf], from_file: &Path) -> Option<PathBuf> {
+    let own_module = module_of(from_file);
+    candidates
+        .iter()
+        .min_by_key(|c| {
+            let same_module = own_module.is_some() && module_of(c) == own_module;
+            (!same_module, !is_main_root(c))
+        })
+        .cloned()
+}
+
+/// The build module a repo-relative path sits in: its source root minus the
+/// trailing `src/<sourceset>/java`. `None` outside a conventional layout.
+fn module_of(path: &Path) -> Option<PathBuf> {
+    let root = source_root_of(path)?;
+    Some(
+        root.components()
+            .take(root.components().count().saturating_sub(3))
+            .collect(),
+    )
+}
+
+fn is_main_root(path: &Path) -> bool {
+    source_root_of(path)
+        .map(|r| r.ends_with("main/java"))
+        .unwrap_or(false)
+}
+
+/// Walk every source root once, recording each `.java` file under its
+/// root-relative fully-qualified name and each package directory under its
+/// root-relative package path.
+fn build_repo_index(repo_root: &Path) -> RepoIndex {
+    let mut index = RepoIndex::default();
+    for root in scan_source_roots(repo_root) {
+        collect_types(repo_root, &root, Path::new(""), &mut index);
+    }
+    index
+}
+
+fn collect_types(repo_root: &Path, root: &Path, pkg: &Path, index: &mut RepoIndex) {
+    let Ok(entries) = std::fs::read_dir(repo_root.join(root).join(pkg)) else {
+        return;
+    };
+    let mut has_types = false;
+    let mut subdirs = Vec::new();
+    for entry in entries.flatten() {
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+        if is_dir {
+            if !SKIP_DIRS.contains(&name.as_str()) && !name.starts_with('.') {
+                subdirs.push(name);
+            }
+            continue;
+        }
+        if let Some(stem) = name.strip_suffix(".java") {
+            has_types = true;
+            index
+                .classes
+                .entry(pkg.join(stem))
+                .or_default()
+                .push(root.join(pkg).join(&name));
+        }
+    }
+    if has_types {
+        index
+            .packages
+            .entry(pkg.to_path_buf())
+            .or_default()
+            .push(root.join(pkg));
+    }
+    for sub in subdirs {
+        collect_types(repo_root, root, &pkg.join(sub), index);
     }
 }
 
@@ -373,6 +475,7 @@ fn handle_type_declaration(
     defs: &mut Vec<ExtractedDef>,
     scope_of: &mut HashMap<usize, usize>,
     def_name_ids: &mut HashSet<usize>,
+    field_owners: &mut HashSet<(String, String)>,
     parent: Option<usize>,
     class_chain: &[String],
     package: Option<&str>,
@@ -441,10 +544,68 @@ fn handle_type_declaration(
                 defs,
                 scope_of,
                 def_name_ids,
+                field_owners,
                 Some(class_idx),
                 &chain,
                 package,
             );
+            continue;
+        }
+        // Fields get defs of their own, one per declarator. Without them a
+        // very common Java shape loses its chain entirely: a JUnit class
+        // builds its fixture in a field initializer
+        //
+        //     private final ApplicationContextRunner contextRunner =
+        //         new ApplicationContextRunner().withConfiguration(
+        //             AutoConfigurations.of(JacksonAutoConfiguration.class));
+        //
+        // and every test method then works through `this.contextRunner`.
+        // The dependency on `JacksonAutoConfiguration` lives on the *field*,
+        // so with no field def the initializer's refs land on the class,
+        // `Contains` only walks child -> parent, and the test methods are
+        // never reached. Giving the field a def puts a real `Reads` edge
+        // between each method and the fixture it uses.
+        if member.kind() == "field_declaration" {
+            let annotated = container_invocable(member, src);
+            let mut fields = member.walk();
+            let declarators: Vec<Node> = member
+                .children(&mut fields)
+                .filter(|c| c.kind() == "variable_declarator")
+                .collect();
+            for declarator in declarators {
+                let Some(field_name_node) = declarator.child_by_field_name("name") else {
+                    continue;
+                };
+                let Ok(field_name) = field_name_node.utf8_text(src) else {
+                    continue;
+                };
+                def_name_ids.insert(field_name_node.id());
+                field_owners.insert((type_name.to_string(), field_name.to_string()));
+                let idx = push_def(
+                    declarator,
+                    // `Class#field`, not `Class.field`. The indexer keys defs
+                    // on the segment after the last `.`, so `Class.field`
+                    // would be indexed as bare `field` and every same-named
+                    // field in the package would resolve to it — two test
+                    // classes that each hold a `gson` field would cross-link,
+                    // and on google/gson that alone dragged a peripheral edit
+                    // out to 1439 of 1534 tests. A `#` keeps the whole
+                    // qualified string as the key, which matches Java: a bare
+                    // field name is resolved in its own class, never a
+                    // sibling's.
+                    format!("{type_name}#{field_name}"),
+                    DefKind::Method,
+                    src,
+                    defs,
+                    // An injected field (`@Autowired`, `@Mock`, `@Value`) is
+                    // populated by the container, same reasoning as an
+                    // annotated method below.
+                    annotated.then_some(class_idx),
+                    None,
+                );
+                // The initializer's refs belong to the field, not the class.
+                scope_of.insert(declarator.id(), idx);
+            }
             continue;
         }
         if !matches!(
@@ -461,7 +622,11 @@ fn handle_type_declaration(
         };
         def_name_ids.insert(member_name_node.id());
 
-        let (kind, test_id) = if is_test_method(member, src) {
+        let annotations = annotation_names(member, src);
+        let (kind, test_id) = if annotations
+            .iter()
+            .any(|n| TEST_ANNOTATIONS.contains(&n.as_str()))
+        {
             (
                 DefKind::TestCase,
                 Some(test_id_for(package, &chain, member_name)),
@@ -474,29 +639,46 @@ fn handle_type_declaration(
         // this costs nothing at resolution time and makes `why` output name
         // the owning type.
         //
-        // `parent: None` — deliberately *not* the enclosing class. `walk`
-        // reverse-propagates `Contains{parent, child}` as genuine
-        // behavioral embedding, so parenting a method to its class would
-        // mean "any method body changed" => "the class changed" => every
-        // test that so much as writes `new Calc()` or holds a `Calc` field
-        // is impacted. In a language where all code lives in a class that
-        // is nearly every test in the repo, which would leave Java
-        // selection technically sound but useless.
+        // Whether this member hangs off its class in the graph, which
+        // decides how far a change to it widens. `walk` reverse-propagates
+        // `Contains{parent, child}` as behavioral embedding: parenting a
+        // method to its class means "this method body changed" => "the
+        // class changed" => every test that merely writes `new Calc()` or
+        // holds a `Calc` field is impacted.
         //
-        // Nothing real is lost: a class whose *own* code runs a method —
-        // a field initializer, a static block — records that as an
-        // ordinary `Calls` ref attributed to the class def, so genuine
-        // embedding still propagates. What disappears is only the
-        // *presumed* embedding of a method the caller never invokes.
-        // Parentless defs get wired to the file's `ModuleInit` by the
-        // indexer, and `walk` already declines to widen through that.
+        // Doing that unconditionally is very wide (in Java *all* code lives
+        // in a class). Never doing it is *unsound*, which is worse and not
+        // hypothetical: a Spring `@Bean` method is invoked by the container,
+        // never by name, so with no containment edge a change to it reaches
+        // no test at all — a silent under-select, which the selection
+        // contract forbids. Verified on spring-boot: editing a `@Bean` body
+        // selected zero of 17,720 tests.
+        //
+        // So: a member carrying *any* annotation is treated as reachable
+        // without being named, and parents to its class. That covers the
+        // realistic reflective entry points — `@Bean`, `@PostConstruct`,
+        // `@EventListener`, `@Scheduled`, `@RequestMapping`, JUnit's own
+        // lifecycle hooks — because framework-invoked Java is
+        // annotation-driven essentially by construction. A plain, unannotated
+        // method is reached by name or not at all: ordinary calls and
+        // interface dispatch both go through `Calls` (short-name matching
+        // already widens across implementations), and a class running its
+        // own method from a field initializer or static block records that
+        // as a `Calls` ref attributed to the class def. Parentless defs get
+        // wired to the file's `ModuleInit`, which `walk` declines to widen
+        // through.
+        //
+        // Residual gap, accepted and named: `Class.forName(..).getMethod
+        // ("plainName")` against an *unannotated* method. That's the same
+        // class of dynamic-reflection risk every language plugin here
+        // carries, and `testless.toml`'s `always-run` is the escape hatch.
         let idx = push_def(
             member,
             format!("{type_name}.{member_name}"),
             kind,
             src,
             defs,
-            None,
+            container_invocable(member, src).then_some(class_idx),
             test_id,
         );
         scope_of.insert(member.id(), idx);
@@ -519,12 +701,14 @@ fn test_id_for(package: Option<&str>, chain: &[String], method: &str) -> Vec<Str
     out
 }
 
-/// Does this member carry a JUnit 5 test annotation? Matched on the
-/// annotation's simple name (see [`TEST_ANNOTATIONS`]).
-fn is_test_method(member: Node, src: &[u8]) -> bool {
-    annotation_names(member, src)
+/// Whether `node` carries an annotation implying something other than the
+/// compiler invokes it: a Spring `@Bean`, a `@PostConstruct`, an injected
+/// `@Autowired` field. Purely static annotations ([`INERT_ANNOTATIONS`])
+/// don't count.
+fn container_invocable(node: Node, src: &[u8]) -> bool {
+    annotation_names(node, src)
         .iter()
-        .any(|n| TEST_ANNOTATIONS.contains(&n.as_str()))
+        .any(|n| !INERT_ANNOTATIONS.contains(&n.as_str()))
 }
 
 /// The simple names of every annotation in `node`'s `modifiers` child.
@@ -664,6 +848,54 @@ struct RefCtx<'a> {
     scope_of: &'a HashMap<usize, usize>,
     def_name_ids: &'a HashSet<usize>,
     known_names: &'a HashSet<String>,
+    /// Owning class name per def index, so a ref can be resolved relative to
+    /// the class it appears in.
+    def_class: &'a [Option<String>],
+    /// (class, field) pairs this file declares; see `field_ref`.
+    field_owners: &'a HashSet<(String, String)>,
+}
+
+impl RefCtx<'_> {
+    /// How to record a reference to the bare name `name` seen inside def
+    /// `def`.
+    ///
+    /// When `name` is a field of the very class the reference sits in, it
+    /// resolves to that class's field def and nothing else — that is Java's
+    /// own rule, and keeping it exact is what stops two classes' identically
+    /// named fields from linking together.
+    ///
+    /// Otherwise it falls back to the plain name gated by `known_names`: an
+    /// *inherited* field (declared by a superclass, so absent from
+    /// `field_owners`) still has to reach its declaration, and matching by
+    /// bare name over-approximates rather than missing it.
+    fn field_ref(&self, def: usize, name: &str) -> Option<String> {
+        if let Some(Some(class)) = self.def_class.get(def) {
+            if self
+                .field_owners
+                .contains(&(class.clone(), name.to_string()))
+            {
+                return Some(format!("{class}#{name}"));
+            }
+        }
+        self.known_names.contains(name).then(|| name.to_string())
+    }
+}
+
+/// The class each def belongs to, derived from the `Class#field` /
+/// `Class.member` naming above; a type's own def maps to itself, so refs in
+/// a static initializer resolve against that type's fields.
+fn def_classes(defs: &[ExtractedDef]) -> Vec<Option<String>> {
+    defs.iter()
+        .map(|d| match d.kind {
+            DefKind::ModuleInit => None,
+            DefKind::Class => Some(d.name.clone()),
+            _ => d
+                .name
+                .split_once('#')
+                .or_else(|| d.name.split_once('.'))
+                .map(|(class, _)| class.to_string()),
+        })
+        .collect()
 }
 
 fn node_text<'a>(node: Node, src: &'a [u8]) -> &'a str {
@@ -707,13 +939,27 @@ fn walk_refs(
                         .map(|o| node_text(o, ctx.src).to_string()),
                     line,
                 });
-                // A plain identifier receiver is fully described by the
-                // qualifier above; anything richer (`a().b()`, `new
-                // Foo().bar()`) can hide further refs, so recurse into it.
-                if let Some(object) = object {
-                    if object.kind() != "identifier" {
-                        walk_refs(object, ctx, def, calls, reads);
+                match object {
+                    // `contextRunner.run()`: the receiver names a field or
+                    // an imported type, and that *is* a dependency of this
+                    // method — the qualifier alone carries no edge, since
+                    // resolution matches on `name`. Record it as a read so
+                    // a method using a fixture field links to that field.
+                    Some(object) if object.kind() == "identifier" => {
+                        let text = node_text(object, ctx.src);
+                        if let Some(name) = ctx.field_ref(def, text) {
+                            reads.push(ExtractedRef {
+                                from_def: def,
+                                name,
+                                qualifier: None,
+                                line,
+                            });
+                        }
                     }
+                    // Anything richer (`a().b()`, `new Foo().bar()`) can
+                    // hide further refs, so recurse into it.
+                    Some(object) => walk_refs(object, ctx, def, calls, reads),
+                    None => {}
                 }
             }
             if let Some(args) = node.child_by_field_name("arguments") {
@@ -749,30 +995,47 @@ fn walk_refs(
                 node.child_by_field_name("object"),
                 node.child_by_field_name("field"),
             ) {
-                if object.kind() == "identifier" {
-                    let obj_name = node_text(object, ctx.src).to_string();
-                    let field_name = node_text(field, ctx.src).to_string();
-                    if ctx.known_names.contains(&obj_name) || ctx.known_names.contains(&field_name)
-                    {
-                        reads.push(ExtractedRef {
-                            from_def: def,
-                            name: field_name,
-                            qualifier: Some(obj_name),
-                            line,
-                        });
+                match object.kind() {
+                    "identifier" => {
+                        let obj_name = node_text(object, ctx.src).to_string();
+                        let field_name = node_text(field, ctx.src).to_string();
+                        if ctx.known_names.contains(&obj_name)
+                            || ctx.known_names.contains(&field_name)
+                        {
+                            reads.push(ExtractedRef {
+                                from_def: def,
+                                name: field_name,
+                                qualifier: Some(obj_name),
+                                line,
+                            });
+                        }
                     }
-                } else {
-                    walk_refs(object, ctx, def, calls, reads);
+                    // `this.contextRunner`: unqualified access to one of
+                    // this class's own fields. Without this arm the whole
+                    // `this.`-prefixed style — which is how a lot of Java
+                    // reads its own state — contributes no edges at all.
+                    "this" => {
+                        let field_name = node_text(field, ctx.src);
+                        if let Some(name) = ctx.field_ref(def, field_name) {
+                            reads.push(ExtractedRef {
+                                from_def: def,
+                                name,
+                                qualifier: None,
+                                line,
+                            });
+                        }
+                    }
+                    _ => walk_refs(object, ctx, def, calls, reads),
                 }
             }
         }
         "identifier" => {
             if !ctx.def_name_ids.contains(&node.id()) {
                 let text = node_text(node, ctx.src);
-                if ctx.known_names.contains(text) {
+                if let Some(name) = ctx.field_ref(def, text) {
                     reads.push(ExtractedRef {
                         from_def: def,
-                        name: text.to_string(),
+                        name,
                         qualifier: None,
                         line,
                     });
